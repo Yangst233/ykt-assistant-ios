@@ -93,6 +93,7 @@ struct Home: View {
                                 model.openDeck(id: model.presentation, title: "实时课件", historical: nil)
                             }
                         }
+                        NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
                         Button("重新连接") { model.connect() }
                         Button("离开课堂", role: .destructive) { model.leave() }
                     }
@@ -220,6 +221,7 @@ struct Home: View {
             Picker("服务", selection: Binding(get: { model.service }, set: model.switchService)) {
                 ForEach(Service.allCases) { Text($0.title).tag($0) }
             }
+            NavigationLink("AI 设置") { AISettingsView() }
             Section("已保存账号") {
                 ForEach(model.accounts.filter { $0.service == model.service }) { account in
                     Button {

@@ -102,9 +102,43 @@ final class RainTests: XCTestCase {
         let accounts = [standard, pro]
         XCTAssertEqual(Account.forLaunch(accounts, service: .standard, selectedID: standard.id)?.id, standard.id)
         XCTAssertEqual(Account.forLaunch(accounts, service: nil, selectedID: nil)?.id, pro.id)
-        XCTAssertNil(Account.forLaunch(accounts, service: .changjiang, selectedID: pro.id))
+        XCTAssertEqual(Account.forLaunch(accounts, service: .standard, selectedID: pro.id)?.service, .pro)
         XCTAssertNil(Account.forLaunch(accounts, service: .pro, selectedID: nil))
         XCTAssertNil(Account.forLaunch([standard], service: .pro, selectedID: pro.id))
+    }
+
+    @MainActor func testQuestionTimelineReplayAndManualSubmissionContracts() throws {
+        let model = QuizModel()
+        let item: JSON = ["type": "problem", "pres": "72", "prob": "13", "dt": 12345]
+        model.ingest(["op": "hello", "timeline": [item]], presentation: "")
+        let original = try XCTUnwrap(model.question("13"))
+        model.update("13", round: original.round) {
+            $0.specification = ["problemType": 2, "options": [["key": "B"], ["key": "A"]]]
+            $0.draft.options = ["A", "B"]
+        }
+        model.ingest(["op": "hello", "timeline": [item]], presentation: "")
+        let q = try XCTUnwrap(model.question("13"))
+        XCTAssertEqual(q.round, original.round)
+        XCTAssertEqual(q.presentation, "72")
+        let now = ContinuousClock().now
+        let answer = try q.submission(finished: false, wall: 54321, now: now)
+        XCTAssertEqual(answer.path, "/api/v3/lesson/problem/answer")
+        XCTAssertEqual(answer.body.field("dt"), "54321")
+        XCTAssertEqual(answer.body["result"] as? [String], ["B", "A"])
+        let retry = try q.submission(finished: true, wall: 54321, now: now)
+        XCTAssertEqual(retry.path, "/api/v3/lesson/problem/retry")
+        let entry = try XCTUnwrap((retry.body["problems"] as? [JSON])?.first)
+        XCTAssertEqual(entry.field("dt"), "12345")
+        XCTAssertTrue(entry["retry_times"] is NSNull)
+    }
+
+    func testAIRequiresMatchingNonceAndExistingOption() throws {
+        let q = ClassroomQuestion(id: "8", presentation: "42", eventTime: 0,
+            specification: ["problemType": 1, "options": [["key": "A"]]])
+        let valid = #"{"schema_version":1,"question_token":"local","problem_type":1,"status":"answered","answer":{"option_keys":["A"],"blank_values":[],"text":""},"explanation":"Reason","confidence":0.8}"#
+        XCTAssertEqual(try QuizAI.parse(valid, question: q, nonce: "local").draft.options, ["A"])
+        XCTAssertThrowsError(try QuizAI.parse(valid, question: q, nonce: "different"))
+        XCTAssertThrowsError(try QuizAI.parse(valid.replacingOccurrences(of: "[\"A\"]", with: "[\"Z\"]"), question: q, nonce: "local"))
     }
 
     func testCookieRoundTrip() throws {

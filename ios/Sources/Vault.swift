@@ -10,7 +10,7 @@ struct Account: Codable, Identifiable {
     var id: String { service.rawValue + ":" + userID }
 
     static func forLaunch(_ accounts: [Account], service: Service?, selectedID: String?) -> Account? {
-        if let matching = accounts.first(where: { $0.id == selectedID && (service == nil || $0.service == service) }) {
+        if let matching = accounts.first(where: { $0.id == selectedID }) {
             return matching
         }
         // Older versions saved accounts but no active selection. New logins were appended.
@@ -19,24 +19,33 @@ struct Account: Codable, Identifiable {
 }
 
 enum Vault {
-    static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "com.ykt.assistant.ios",
-        kSecAttrAccount as String: "accounts"
-    ]
+    private static func query(account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: "com.ykt.assistant.ios",
+         kSecAttrAccount as String: account]
+    }
 
     static func read() throws -> [Account] {
-        var request = query
-        request[kSecReturnData as String] = true
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(request as CFDictionary, &result)
-        if status == errSecItemNotFound { return [] }
-        guard status == errSecSuccess, let data = result as? Data else { throw RainError.keychain(status) }
+        guard let data = try readData(account: "accounts") else { return [] }
         return try JSONDecoder().decode([Account].self, from: data)
     }
 
+    static func readData(account: String) throws -> Data? {
+        var request = query(account: account)
+        request[kSecReturnData as String] = true
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw RainError.keychain(status) }
+        return data
+    }
+
     static func write(_ accounts: [Account]) throws {
-        let data = try JSONEncoder().encode(accounts)
+        try writeData(JSONEncoder().encode(accounts), account: "accounts")
+    }
+
+    static func writeData(_ data: Data, account: String) throws {
+        let query = query(account: account)
         let values = [kSecValueData as String: data]
         var status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
         if status == errSecItemNotFound {

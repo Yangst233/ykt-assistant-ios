@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
     @Published var deck: Deck?
     @Published var busy = false
     @Published var canPage = true
+    let quiz = QuizModel()
+    private static let activeSelectionKey = "activeRainSelection"
     private static let activeServiceKey = "activeRainService"
     private static let activeAccountKey = "activeRainAccount"
 
@@ -45,10 +47,12 @@ final class AppModel: ObservableObject {
         do {
             accounts = try Vault.read()
             let defaults = UserDefaults.standard
-            let savedService = defaults.string(forKey: Self.activeServiceKey).flatMap(Service.init(rawValue:))
-            let account = Account.forLaunch(accounts, service: savedService,
-                                            selectedID: defaults.string(forKey: Self.activeAccountKey))
-            service = savedService ?? account?.service ?? .standard
+            let saved = defaults.dictionary(forKey: Self.activeSelectionKey)
+            let serviceName = saved?["service"] as? String ?? defaults.string(forKey: Self.activeServiceKey)
+            let savedService = serviceName.flatMap(Service.init(rawValue:))
+            let selectedID = saved == nil ? defaults.string(forKey: Self.activeAccountKey) : saved?["account"] as? String
+            let account = Account.forLaunch(accounts, service: savedService, selectedID: selectedID)
+            service = account?.service ?? savedService ?? .standard
             if let account { select(account) }
         } catch { self.error = error.localizedDescription }
     }
@@ -89,6 +93,7 @@ final class AppModel: ObservableObject {
     private func reset() {
         cancel()
         disconnect()
+        quiz.bind()
         api = nil
         selected = nil
         lesson = nil
@@ -122,8 +127,9 @@ final class AppModel: ObservableObject {
 
     private func rememberSelection() {
         let defaults = UserDefaults.standard
-        defaults.set(service.rawValue, forKey: Self.activeServiceKey)
-        defaults.set(selected, forKey: Self.activeAccountKey)
+        var selection = ["service": service.rawValue]
+        selection["account"] = selected
+        defaults.set(selection, forKey: Self.activeSelectionKey)
     }
 
     func delete(_ account: Account) {
@@ -253,6 +259,7 @@ final class AppModel: ObservableObject {
     private func open(_ lesson: Lesson) {
         disconnect()
         self.lesson = lesson
+        quiz.bind(api: api, lesson: lesson)
         lessonFinished = false
         presentation = ""
         livePage = ""
@@ -261,6 +268,7 @@ final class AppModel: ObservableObject {
 
     func leave() {
         cancel()
+        quiz.bind()
         guard let socket, let lesson else {
             disconnect()
             self.lesson = nil
@@ -337,11 +345,6 @@ final class AppModel: ObservableObject {
                         invalidateCredentials(lesson.id)
                         return
                     }
-                    if event.field("op") == "lessonfinished" || event.field("message") == "lesson finished" {
-                        lessonFinished = true
-                        connection = "课堂已结束"
-                        return
-                    }
                     if event.field("op") == "hello" { connection = "课堂已连接" }
                     let timeline = event["timeline"] as? [JSON]
                     let recent = timeline?.last { $0.field("type") == "slide" && !$0.field("pres").isEmpty }
@@ -352,6 +355,12 @@ final class AppModel: ObservableObject {
                     } else if !id.isEmpty { presentation = id }
                     if !event.field("slideindex").isEmpty { livePage = event.field("slideindex") }
                     if let slide = event["slide"] as? JSON, !slide.field("si").isEmpty { livePage = slide.field("si") }
+                    quiz.ingest(event, presentation: presentation)
+                    if quiz.finished {
+                        lessonFinished = true
+                        connection = "课堂已结束"
+                        return
+                    }
                 }
             } catch {
                 if socket === ws && !Task.isCancelled {
@@ -368,6 +377,7 @@ final class AppModel: ObservableObject {
 
     private func invalidateCredentials(_ id: String) {
         disconnect()
+        quiz.bind()
         lesson = nil
         presentation = ""
         livePage = ""
