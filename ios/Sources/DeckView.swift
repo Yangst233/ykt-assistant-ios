@@ -10,6 +10,7 @@ struct DeckView: View {
     var followError: String? = nil
     var retryFollow: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appearance: AppAppearance
     @State private var index = 0
     @State private var image: UIImage?
     @State private var error: String?
@@ -28,18 +29,8 @@ struct DeckView: View {
     var body: some View {
         NavigationStack {
             VStack {
-                if let image {
-                    ScrollView([.horizontal, .vertical]) {
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .containerRelativeFrame(.horizontal) { size, _ in size * zoom }
-                            .accessibilityLabel("课件第 \(index + 1) 页")
-                    }
-                    .onTapGesture(count: 2) { zoom = zoom == 1 ? 2 : 1 }
-                } else {
-                    Spacer()
-                    ProgressView()
-                    Spacer()
-                }
+                slideViewport
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let followTeacher {
                     Toggle("跟随老师", isOn: followTeacher)
                         .padding(.horizontal)
@@ -63,7 +54,8 @@ struct DeckView: View {
                 }
                 if let share { ShareLink(item: share) { Label("分享导出文件", systemImage: "square.and.arrow.up") } }
             }
-            .wallpaperSurface()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { readerBackground }
             .navigationTitle(deck.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -73,7 +65,10 @@ struct DeckView: View {
                         Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exporting)
                         Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exporting)
                         Button("导出 ZIP", systemImage: "archivebox") { export(deck, pptx: false, name: nil) }.disabled(exporting)
-                        Button("重新载入当前页", systemImage: "arrow.clockwise") { retry += 1 }
+                        Button("重新载入当前页", systemImage: "arrow.clockwise") {
+                            if let key = slideCacheKey { appearance.removeCachedPPTImage(key) }
+                            retry += 1
+                        }
                     }
                 }
             }
@@ -84,13 +79,19 @@ struct DeckView: View {
                 if followTeacher?.wrappedValue == true, let target = deck.index(for: page) { index = target }
             }
             .task(id: "\(deck.id):\(index):\(retry)") {
-                image = nil
                 zoom = 1
-                guard deck.slides.indices.contains(index) else { return }
+                guard deck.slides.indices.contains(index), let key = slideCacheKey else { image = nil; return }
+                if let cached = appearance.cachedPPTImage(key) {
+                    image = cached
+                    return
+                }
+                image = nil
+                let urls = deck.slides[index]
                 do {
-                    let data = try await api.slideImage(deck.slides[index])
+                    let data = try await api.slideImage(urls)
                     try Task.checkCancellation()
                     guard let bitmap = UIImage(data: data) else { throw RainError.invalid("课件图片") }
+                    appearance.cachePPTImage(bitmap, key: key)
                     image = bitmap
                 } catch {
                     if !Task.isCancelled { self.error = error.localizedDescription }
@@ -128,6 +129,70 @@ struct DeckView: View {
         }
     }
 
+    private var slideCacheKey: String? {
+        guard deck.slides.indices.contains(index) else { return nil }
+        return ([api.service.rawValue, api.userID] + deck.slides[index]).joined(separator: "\n")
+    }
+
+    private var readerBackground: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color(uiColor: .systemBackground)
+                if let wallpaper = appearance.wallpaper {
+                    Image(uiImage: wallpaper)
+                        .resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                    Color(uiColor: .systemBackground).opacity(appearance.wallpaperOverlayOpacity)
+                }
+                Rectangle().fill(.regularMaterial)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var slideViewport: some View {
+        GeometryReader { geometry in
+            if zoom > 1, let image {
+                ScrollView([.horizontal, .vertical]) {
+                    slideImage(image)
+                        .frame(width: geometry.size.width * zoom, height: geometry.size.height * zoom)
+                }
+                .onTapGesture(count: 2) { zoom = 1 }
+            } else {
+                ZStack {
+                    Color.clear
+                    if let image {
+                        slideImage(image)
+                            .onTapGesture(count: 2) { zoom = 2 }
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { gesture in
+                    let movement = gesture.translation
+                    guard abs(movement.width) >= 44, abs(movement.width) > abs(movement.height) else { return }
+                    movePage(by: movement.width < 0 ? 1 : -1)
+                })
+            }
+        }
+    }
+
+    private func slideImage(_ image: UIImage) -> some View {
+        Image(uiImage: image).resizable().scaledToFit()
+            .accessibilityLabel("课件第 \(index + 1) 页")
+    }
+
+    private func movePage(by offset: Int) {
+        guard followTeacher?.wrappedValue != true, deck.slides.indices.contains(index + offset) else { return }
+        index += offset
+    }
+
     @ViewBuilder private var pageControls: some View {
         if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: 16) {
@@ -159,7 +224,7 @@ struct DeckView: View {
 
     private func pageButton(_ title: String, icon: String, offset: Int) -> some View {
         Button {
-            index += offset
+            movePage(by: offset)
         } label: {
             Label(title, systemImage: icon)
                 .labelStyle(.iconOnly)

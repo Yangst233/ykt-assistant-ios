@@ -23,6 +23,7 @@ struct RainApp: App {
 @MainActor
 struct Home: View {
     @ObservedObject var model: AppModel
+    @EnvironmentObject private var appearance: AppAppearance
     private enum HomeTab: Hashable { case live, all, activities, account }
 
     @State private var tab: HomeTab = .live
@@ -293,6 +294,9 @@ struct Home: View {
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
             AppearanceSettings()
+            Section("课件") {
+                Toggle("缓存 PPT", isOn: $appearance.cachePPT)
+            }
         }
         .wallpaperSurface()
     }

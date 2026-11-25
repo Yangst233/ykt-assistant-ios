@@ -39,12 +39,37 @@ final class AppAppearance: ObservableObject {
     @Published var wallpaperOverlayOpacity = UserDefaults.standard.object(forKey: "wallpaperOverlayOpacity") as? Double ?? 0.58 {
         didSet { UserDefaults.standard.set(wallpaperOverlayOpacity, forKey: "wallpaperOverlayOpacity") }
     }
+    @Published var cachePPT = UserDefaults.standard.object(forKey: "cachePPT") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(cachePPT, forKey: "cachePPT")
+            if !cachePPT { pptCache.removeAllObjects() }
+        }
+    }
+    private let pptCache = NSCache<NSString, UIImage>()
     @Published private(set) var wallpaper: UIImage?
 
     init() {
+        pptCache.totalCostLimit = 64 * 1024 * 1024
+        pptCache.countLimit = 24
         if let url = try? Self.wallpaperURL(), let data = try? Data(contentsOf: url) {
             wallpaper = UIImage(data: data)
         }
+    }
+
+    func cachedPPTImage(_ key: String) -> UIImage? {
+        guard cachePPT else { return nil }
+        return pptCache.object(forKey: key as NSString)
+    }
+
+    func cachePPTImage(_ image: UIImage, key: String) {
+        guard cachePPT, let pixels = image.cgImage else { return }
+        let (cost, overflow) = pixels.bytesPerRow.multipliedReportingOverflow(by: pixels.height)
+        guard !overflow, cost <= pptCache.totalCostLimit else { return }
+        pptCache.setObject(image, forKey: key as NSString, cost: cost)
+    }
+
+    func removeCachedPPTImage(_ key: String) {
+        pptCache.removeObject(forKey: key as NSString)
     }
 
     private static func wallpaperURL() throws -> URL {
