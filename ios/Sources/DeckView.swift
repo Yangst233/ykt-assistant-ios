@@ -32,14 +32,7 @@ struct DeckView: View {
                     ProgressView()
                     Spacer()
                 }
-                HStack {
-                    Button("上一页", systemImage: "chevron.left") { index -= 1 }.disabled(index == 0)
-                    Spacer()
-                    Text("\(index + 1) / \(deck.slides.count)")
-                    Spacer()
-                    Button("下一页", systemImage: "chevron.right") { index += 1 }.disabled(index + 1 == deck.slides.count)
-                }
-                .padding()
+                pageControls
                 if exporting {
                     ProgressView(value: Double(progress), total: Double(deck.slides.count))
                     Button("取消导出") { operation?.cancel() }
@@ -52,10 +45,10 @@ struct DeckView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("操作", systemImage: "ellipsis.circle") {
-                        Button("保存当前图片") { save() }.disabled(image == nil || exporting)
-                        Button("导出 PPTX") { export(pptx: true) }.disabled(exporting)
-                        Button("导出 ZIP") { export(pptx: false) }.disabled(exporting)
-                        Button("重新载入当前页") { retry += 1 }
+                        Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exporting)
+                        Button("导出 PPTX", systemImage: "document") { export(pptx: true) }.disabled(exporting)
+                        Button("导出 ZIP", systemImage: "archivebox") { export(pptx: false) }.disabled(exporting)
+                        Button("重新载入当前页", systemImage: "arrow.clockwise") { retry += 1 }
                     }
                 }
             }
@@ -80,6 +73,47 @@ struct DeckView: View {
                 Button("好") { error = nil }
             } message: { Text(error ?? "") }
         }
+    }
+
+    @ViewBuilder private var pageControls: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 16) {
+                HStack(spacing: 12) {
+                    pageButton("上一页", icon: "chevron.left", offset: -1)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                    pageCount
+                    pageButton("下一页", icon: "chevron.right", offset: 1)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+            }
+            .padding()
+        } else {
+            HStack(spacing: 12) {
+                pageButton("上一页", icon: "chevron.left", offset: -1)
+                pageCount
+                pageButton("下一页", icon: "chevron.right", offset: 1)
+            }
+            .padding()
+        }
+    }
+
+    private var pageCount: some View {
+        Text("\(index + 1) / \(deck.slides.count)")
+            .font(.footnote.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("第 \(index + 1) 页，共 \(deck.slides.count) 页")
+    }
+
+    private func pageButton(_ title: String, icon: String, offset: Int) -> some View {
+        Button {
+            index += offset
+        } label: {
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .disabled(!deck.slides.indices.contains(index + offset))
     }
 
     private func clearShare() {

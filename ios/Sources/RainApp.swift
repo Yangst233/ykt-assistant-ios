@@ -21,29 +21,29 @@ struct RainApp: App {
 struct Home: View {
     @ObservedObject var model: AppModel
     @State private var input = ""
+    @State private var classroomSearch = ""
     @State private var scan = false
     @State private var course = ""
     @State private var type = ""
 
     var body: some View {
         TabView {
-            NavigationStack { classes.navigationTitle("课程") }
-                .tabItem { Label("课程", systemImage: "book") }
-            NavigationStack { activities.navigationTitle("动态") }
-                .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
-            NavigationStack { settings.navigationTitle("账号") }
-                .tabItem { Label("账号", systemImage: "person.crop.circle") }
-        }
-        .safeAreaInset(edge: .top) {
-            if model.busy {
-                HStack {
-                    ProgressView()
-                    Spacer()
-                    Button("取消") { model.cancel(); model.qr = nil }
-                }
-                .padding(.horizontal)
-                .background(.bar)
+            NavigationStack {
+                allClassrooms.navigationTitle("所有课堂").toolbar { requestToolbar }
             }
+            .tabItem { Label("所有课堂", systemImage: "books.vertical") }
+            NavigationStack {
+                liveClassrooms.navigationTitle("正在上课").toolbar { requestToolbar }
+            }
+            .tabItem { Label("正在上课", systemImage: "play.circle") }
+            NavigationStack {
+                activities.navigationTitle("动态").toolbar { requestToolbar }
+            }
+            .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
+            NavigationStack {
+                settings.navigationTitle("账号").toolbar { requestToolbar }
+            }
+            .tabItem { Label("账号", systemImage: "person.crop.circle") }
         }
         .sheet(isPresented: $scan) {
             Scanner { result in
@@ -68,6 +68,17 @@ struct Home: View {
             }
     }
 
+    @ToolbarContentBuilder private var requestToolbar: some ToolbarContent {
+        if model.busy {
+            ToolbarItem(placement: .topBarTrailing) {
+                ProgressView().accessibilityLabel("正在加载")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("取消") { model.cancel(); model.qr = nil }
+            }
+        }
+    }
+
     private func requestScanner() {
         Task {
             guard await AVCaptureDevice.requestAccess(for: .video), DataScannerViewController.isAvailable else {
@@ -78,7 +89,7 @@ struct Home: View {
         }
     }
 
-    private var classes: some View {
+    private var liveClassrooms: some View {
         List {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
@@ -126,17 +137,40 @@ struct Home: View {
                         }
                     }
                 }
-                Section("我的课程") {
-                    ForEach(model.courses.indices, id: \.self) { index in
-                        let row = model.courses[index]
-                        VStack(alignment: .leading) {
-                            Text(row.field("course_name").nonempty ?? row.field("course_id"))
-                            if let room = row.field("classroom_name").nonempty { Text(room).foregroundStyle(.secondary) }
-                        }
+            }
+        }
+        .refreshable { model.run { try await model.loadCourses() } }
+    }
+
+    private var allClassrooms: some View {
+        List {
+            if model.selected == nil {
+                ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
+            } else {
+                let query = classroomSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+                let matches = model.courses.indices.filter { index in
+                    let row = model.courses[index]
+                    return query.isEmpty || ["course_name", "classroom_name", "course_id"]
+                        .contains { row.field($0).localizedStandardContains(query) }
+                }
+                if matches.isEmpty && !model.busy {
+                    if query.isEmpty {
+                        ContentUnavailableView("暂无课程", systemImage: "books.vertical")
+                    } else {
+                        ContentUnavailableView.search(text: query)
+                    }
+                }
+                ForEach(matches, id: \.self) { index in
+                    let row = model.courses[index]
+                    VStack(alignment: .leading) {
+                        Text(row.field("course_name").nonempty ?? row.field("course_id"))
+                        if let room = row.field("classroom_name").nonempty { Text(room).foregroundStyle(.secondary) }
                     }
                 }
             }
         }
+        .searchable(text: $classroomSearch, prompt: "搜索课程或班级")
+        .onChange(of: model.selected) { _, _ in classroomSearch = "" }
         .refreshable { model.run { try await model.loadCourses() } }
     }
 
