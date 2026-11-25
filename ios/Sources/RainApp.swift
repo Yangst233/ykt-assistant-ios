@@ -8,12 +8,14 @@ import UniformTypeIdentifiers
 struct RainApp: App {
     @StateObject private var model = AppModel()
     @StateObject private var appearance = AppAppearance()
+    @StateObject private var exports = CoursewareExport()
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
             Home(model: model)
                 .environmentObject(appearance)
+                .environmentObject(exports)
                 .preferredColorScheme(appearance.theme.scheme)
                 .onChange(of: phase, initial: true) { _, new in model.phase(new) }
         }
@@ -24,6 +26,7 @@ struct RainApp: App {
 struct Home: View {
     @ObservedObject var model: AppModel
     @EnvironmentObject private var appearance: AppAppearance
+    @EnvironmentObject private var exports: CoursewareExport
     private enum HomeTab: Hashable { case live, all, activities, account }
 
     @State private var tab: HomeTab = .live
@@ -89,6 +92,9 @@ struct Home: View {
         }
         .task(id: model.api.map(ObjectIdentifier.init)) {
             await model.refreshFeed(reset: true)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.deck == nil { FloatingExportView(export: exports) }
         }
         .sheet(isPresented: $showingJoin, onDismiss: {
             if let value = pendingJoin {
@@ -328,34 +334,48 @@ private struct JoinClassroomSheet: View {
     var body: some View {
         NavigationStack {
             MaterialForm {
-                TextField("课堂 ID 或课堂二维码链接", text: $input, axis: .vertical)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if DataScannerViewController.isSupported {
-                    Button("扫描课堂二维码", systemImage: "qrcode.viewfinder") {
-                        requestingCamera = true
-                        Task {
-                            defer { requestingCamera = false }
-                            if await AVCaptureDevice.requestAccess(for: .video), DataScannerViewController.isAvailable {
-                                scanning = true
-                            } else {
-                                error = "相机不可用，请检查相机权限或手动输入课堂 ID"
+                Section {
+                    TextField("输入课堂 ID", text: $input, axis: .vertical)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("确认进入课堂") { onJoin(input) }
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } header: {
+                    Text("使用 ID 进入课堂")
+                } footer: {
+                    Text("输入课堂 ID，也可以粘贴课堂二维码链接。")
+                }
+                Section {
+                    if DataScannerViewController.isSupported {
+                        Button("扫描课堂二维码", systemImage: "qrcode.viewfinder") {
+                            requestingCamera = true
+                            Task {
+                                defer { requestingCamera = false }
+                                if await AVCaptureDevice.requestAccess(for: .video), DataScannerViewController.isAvailable {
+                                    scanning = true
+                                } else {
+                                    error = "相机不可用，请检查相机权限或手动输入课堂 ID"
+                                }
                             }
                         }
+                        .disabled(requestingCamera)
+                    } else {
+                        Text("此设备不支持扫码").foregroundStyle(.secondary)
                     }
-                    .disabled(requestingCamera)
+                } header: {
+                    Text("扫码进入课堂")
+                } footer: {
+                    Text("用相机扫描老师展示的课堂二维码。")
                 }
             }
-            .wallpaperSurface()
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { FrostedReaderBackground() }
             .navigationTitle("加入课堂")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("查看课堂") { onJoin(input) }
-                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
             }
             .navigationDestination(isPresented: $scanning) {
                 Scanner { result in

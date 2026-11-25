@@ -16,14 +16,9 @@ struct DeckView: View {
     @State private var index = 0
     @State private var image: UIImage?
     @State private var error: String?
-    @State private var share: URL?
+    @EnvironmentObject private var exports: CoursewareExport
     @State private var automaticShare: ExportShare?
     @State private var pendingPPTX: (deck: Deck, name: String)?
-    @State private var operation: Task<Void, Never>?
-    @State private var exporting = false
-    @State private var downloadPage: Int? = 1
-    @State private var exportTotal = 0
-    @State private var exportPPTX = false
     @State private var exportName = ""
     @State private var namingDeck: Deck?
     @State private var retry = 0
@@ -49,32 +44,28 @@ struct DeckView: View {
                         Text(followError).font(.footnote).foregroundStyle(.secondary)
                         Button("重试同步") { retryFollow?() }
                     }
-                    if exporting {
-                        ProgressView(value: Double(downloadPage.map { $0 - 1 } ?? exportTotal),
-                                     total: Double(exportTotal)) {
-                            if let page = downloadPage {
-                                Text("正在下载第 \(page) 页，共 \(exportTotal) 页")
-                            } else {
-                                Text(exportPPTX ? "正在生成 PPTX…" : "正在整理 ZIP…")
-                            }
-                        }
-                        .padding(.horizontal)
-                        Button("取消导出") { operation?.cancel() }
+                    if exports.running {
+                        ExportProgressView(export: exports).padding(.horizontal)
                     }
-                    if let share { ShareLink(item: share) { Label("分享导出文件", systemImage: "square.and.arrow.up") } }
+                    if let file = exports.file {
+                        ShareLink(item: file) { Label("分享导出文件", systemImage: "square.and.arrow.up") }
+                    }
+                    if let exportError = exports.error {
+                        Text(exportError).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background { readerBackground }
+            .background { FrostedReaderBackground() }
             .navigationTitle(deck.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("操作", systemImage: "ellipsis.circle") {
-                        Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exporting)
-                        Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exporting)
-                        Button("导出 ZIP", systemImage: "archivebox") { export(deck, pptx: false, name: nil) }.disabled(exporting)
+                        Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exports.running)
+                        Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exports.running)
+                        Button("导出 ZIP", systemImage: "archivebox") { exports.start(deck, api: api, pptx: false, name: nil) }.disabled(exports.running)
                         Button("重新载入当前页", systemImage: "arrow.clockwise") {
                             if let key = slideCacheKey {
                                 appearance.removeCachedPPTImage(key)
@@ -114,15 +105,14 @@ struct DeckView: View {
                     if !Task.isCancelled { self.error = error.localizedDescription }
                 }
             }
-            .onDisappear {
-                operation?.cancel()
-                clearShare()
+            .onChange(of: exports.file) { _, file in
+                if let file { automaticShare = ExportShare(file: file) }
             }
             .sheet(isPresented: Binding(get: { namingDeck != nil }, set: { if !$0 { namingDeck = nil } }),
                    onDismiss: {
                        guard let pendingPPTX else { return }
                        self.pendingPPTX = nil
-                       export(pendingPPTX.deck, pptx: true, name: pendingPPTX.name)
+                       exports.start(pendingPPTX.deck, api: api, pptx: true, name: pendingPPTX.name)
                    }) {
                 NavigationStack {
                     MaterialForm {
@@ -134,7 +124,7 @@ struct DeckView: View {
                     }
                     .scrollContentBackground(.hidden)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background { readerBackground }
+                    .background { FrostedReaderBackground() }
                     .navigationTitle("导出 PPTX")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -194,26 +184,6 @@ struct DeckView: View {
                 appearance.cachePPTImage(bitmap, key: key)
             }
         }
-    }
-
-    private var readerBackground: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color(uiColor: .systemBackground)
-                if let wallpaper = appearance.wallpaper {
-                    Image(uiImage: wallpaper)
-                        .resizable().scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                    Color(uiColor: .systemBackground).opacity(appearance.wallpaperOverlayOpacity)
-                }
-                Rectangle().fill(.regularMaterial)
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 
     private var slideViewport: some View {
@@ -334,35 +304,9 @@ struct DeckView: View {
         .disabled(followTeacher?.wrappedValue == true || !deck.slides.indices.contains(index + offset))
     }
 
-    private func clearShare() {
-        if let share { try? FileManager.default.removeItem(at: share.deletingLastPathComponent()) }
-        share = nil
-    }
-
     private func preparePPTX() {
         exportName = DeckExport.fileStem(deck.title, fallback: "Slides")
         namingDeck = deck
-    }
-
-    private func export(_ source: Deck, pptx: Bool, name: String?) {
-        clearShare()
-        downloadPage = 1
-        exportTotal = source.slides.count
-        exportPPTX = pptx
-        exporting = true
-        operation = Task {
-            defer { exporting = false }
-            do {
-                let file = try await DeckExport.create(source, api: api, pptx: pptx, filename: name) { downloadPage = $0 }
-                if Task.isCancelled { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
-                else {
-                    share = file
-                    automaticShare = ExportShare(file: file)
-                }
-            } catch {
-                if !Task.isCancelled { self.error = error.localizedDescription }
-            }
-        }
     }
 
     private func save() {
@@ -382,6 +326,31 @@ struct DeckView: View {
     }
 }
 
+
+struct FrostedReaderBackground: View {
+    @EnvironmentObject private var appearance: AppAppearance
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color(uiColor: .systemBackground)
+                if let wallpaper = appearance.wallpaper {
+                    Image(uiImage: wallpaper)
+                        .resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                    Color(uiColor: .systemBackground).opacity(appearance.wallpaperOverlayOpacity)
+                }
+                Rectangle().fill(.regularMaterial)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+}
 
 private final class PPTPreloadStore: ObservableObject {
     private let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
