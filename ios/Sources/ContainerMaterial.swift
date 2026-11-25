@@ -84,6 +84,7 @@ extension View {
 @available(iOS 18.0, *)
 extension ContainerValues {
     @Entry fileprivate var isStandaloneContainer = false
+    @Entry var ownsGlassRowLayout = false
 }
 
 private struct StandaloneContainer: ViewModifier {
@@ -146,13 +147,13 @@ private struct MaterialScroll<Rows: View>: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: 26) {
                 ForEach(sections: rows) { section in
                     if !section.content.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             if !section.header.isEmpty {
                                 VStack(alignment: .leading, spacing: 4) { section.header }
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 16)
                             }
@@ -167,9 +168,10 @@ private struct MaterialScroll<Rows: View>: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, GlassRowMetrics.horizontal + 4)
             .padding(.vertical, 12)
         }
+        .environment(\.usesGlassRows, true)
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
             if let refresh {
@@ -198,13 +200,15 @@ private struct GlassSection: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 0) {
-                        row
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .padding(.horizontal, 16)
+                        if row.containerValues.ownsGlassRowLayout {
+                            row
+                        } else {
+                            row.glassRowContent()
+                        }
                         if row.id != lastID {
                             Divider()
                                 .opacity(0.65)
-                                .padding(.leading, 16)
+                                .padding(.leading, GlassRowMetrics.horizontal)
                                 .accessibilityHidden(true)
                         }
                     }

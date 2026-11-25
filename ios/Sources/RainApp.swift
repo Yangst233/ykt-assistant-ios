@@ -147,14 +147,11 @@ struct Home: View {
                     Button {
                         model.enter(lessonID)
                     } label: {
-                        HStack {
+                        NavigationRowLabel(showsArrowInNativeList: true) {
                             Text(courseName(row).nonempty ?? "课堂 " + lessonID)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                         }
                     }
+                    .glassNavigationInteraction()
                     .contextMenu {
                         Button("复制课堂 ID") { UIPasteboard.general.string = lessonID }
                     }
@@ -205,15 +202,17 @@ struct Home: View {
             } else {
                 let courses = Set(model.feed.map { $0.field("courseName") }.filter { !$0.isEmpty }).sorted()
                 Section {
-                    Picker("课程", selection: $course) {
+                    SettingsPickerRow("课程", value: course.isEmpty ? "全部" : course, selection: $course) {
                         Text("全部").tag("")
                         ForEach(courses, id: \.self) { Text($0).tag($0) }
                     }
-                    Picker("类型", selection: $type) {
+                    .ownsGlassRowLayout()
+                    SettingsPickerRow("类型", value: type == "14" ? "课堂" : type == "5" ? "作业" : "全部", selection: $type) {
                         Text("全部").tag("")
                         Text("课堂").tag("14")
                         Text("作业").tag("5")
                     }
+                    .ownsGlassRowLayout()
                     Button("刷新动态") { Task { await model.refreshFeed(reset: true) } }
                         .disabled(model.loadingFeed)
                 }
@@ -227,7 +226,8 @@ struct Home: View {
                             NavigationLink(value: ActivityClassroomRoute(
                                 id: item.field("coursewareId"),
                                 title: item.field("coursewareTitle").nonempty ?? item.field("courseName")
-                            )) { activityLabel(item) }
+                            )) { NavigationRowLabel { activityLabel(item) } }
+                                .glassNavigationInteraction()
                         } else {
                             activityLabel(item)
                         }
@@ -244,22 +244,26 @@ struct Home: View {
     }
 
     private func activityLabel(_ row: JSON) -> some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(row.field("coursewareTitle").nonempty ?? row.field("courseName"))
-            Text(row.field("courseName")).font(.caption).foregroundStyle(.secondary)
+                .font(.body).foregroundStyle(.primary)
+            Text(row.field("courseName")).font(.subheadline).foregroundStyle(.secondary)
             if let ms = Double(row.field("createTime")) {
                 Text(Date(timeIntervalSince1970: ms / 1000), format: .dateTime)
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
+        .lineSpacing(3)
     }
 
     private var settings: some View {
         MaterialList {
-            Picker("服务", selection: Binding(get: { model.service }, set: model.switchService)) {
+            SettingsPickerRow("服务", value: model.service.title, selection: Binding(get: { model.service }, set: model.switchService)) {
                 ForEach(Service.allCases) { Text($0.title).tag($0) }
             }
-            NavigationLink("AI 设置") { AISettingsView() }
+            .ownsGlassRowLayout()
+            NavigationLink { AISettingsView() } label: { NavigationRowLabel { Text("AI 设置") } }
+                .glassNavigationInteraction()
             Section("已保存账号") {
                 ForEach(model.accounts) { account in
                     Button {

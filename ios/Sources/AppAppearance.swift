@@ -156,16 +156,18 @@ struct AppearanceSettings: View {
 
     var body: some View {
         Section("外观") {
-            Picker("主题", selection: $appearance.theme) {
+            SettingsPickerRow("主题", value: appearance.theme.title, selection: $appearance.theme) {
                 ForEach(AppTheme.allCases) { theme in
                     Text(theme.title).tag(theme)
                 }
             }
-            Picker("容器材质", selection: $appearance.containerMaterial) {
+            .ownsGlassRowLayout()
+            SettingsPickerRow("容器材质", value: appearance.containerMaterial.title, selection: $appearance.containerMaterial) {
                 ForEach(ContainerMaterial.allCases) { material in
                     Text(material.title).tag(material)
                 }
             }
+            .ownsGlassRowLayout()
             if appearance.containerMaterial != .standard {
                 VStack(alignment: .leading, spacing: 6) {
                     LabeledContent("玻璃浓度", value: appearance.glassDensity.formatted(.percent.precision(.fractionLength(0))))

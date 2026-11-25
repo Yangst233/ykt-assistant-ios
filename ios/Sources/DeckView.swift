@@ -15,6 +15,8 @@ struct DeckView: View {
     @State private var image: UIImage?
     @State private var error: String?
     @State private var share: URL?
+    @State private var automaticShare: ExportShare?
+    @State private var pendingPPTX: (deck: Deck, name: String)?
     @State private var operation: Task<Void, Never>?
     @State private var exporting = false
     @State private var downloadPage: Int? = 1
@@ -101,12 +103,23 @@ struct DeckView: View {
                 operation?.cancel()
                 clearShare()
             }
-            .sheet(isPresented: Binding(get: { namingDeck != nil }, set: { if !$0 { namingDeck = nil } })) {
+            .sheet(isPresented: Binding(get: { namingDeck != nil }, set: { if !$0 { namingDeck = nil } }),
+                   onDismiss: {
+                       guard let pendingPPTX else { return }
+                       self.pendingPPTX = nil
+                       export(pendingPPTX.deck, pptx: true, name: pendingPPTX.name)
+                   }) {
                 NavigationStack {
                     MaterialForm {
-                        TextField("PPTX 文件名", text: $exportName)
+                        LabeledContent("重命名") {
+                            TextField("输入 PPTX 文件名", text: $exportName)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityLabel("重命名")
+                        }
                     }
-                    .wallpaperSurface()
+                    .scrollContentBackground(.hidden)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background { readerBackground }
                     .navigationTitle("导出 PPTX")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -114,13 +127,16 @@ struct DeckView: View {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("导出") {
                                 guard let source = namingDeck else { return }
+                                pendingPPTX = (source, exportName)
                                 namingDeck = nil
-                                export(source, pptx: true, name: exportName)
                             }
                         }
                     }
                 }
                 .presentationDetents([.medium])
+            }
+            .sheet(item: $automaticShare) { request in
+                ExportActivitySheet(file: request.file)
             }
             .alert("图片已保存", isPresented: $saved) { Button("好") {} }
             .alert("课件", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -255,7 +271,10 @@ struct DeckView: View {
             do {
                 let file = try await DeckExport.create(source, api: api, pptx: pptx, filename: name) { downloadPage = $0 }
                 if Task.isCancelled { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
-                else { share = file }
+                else {
+                    share = file
+                    automaticShare = ExportShare(file: file)
+                }
             } catch {
                 if !Task.isCancelled { self.error = error.localizedDescription }
             }
@@ -279,6 +298,21 @@ struct DeckView: View {
     }
 }
 
+
+private struct ExportShare: Identifiable {
+    let file: URL
+    var id: URL { file }
+}
+
+private struct ExportActivitySheet: UIViewControllerRepresentable {
+    let file: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [file], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
 
 @MainActor
 struct LiveDeckReader: View {

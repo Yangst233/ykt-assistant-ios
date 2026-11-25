@@ -60,7 +60,10 @@ struct ClassroomDetailView: View {
                     }
                     ClassroomMetadata(info: info, report: report, attendance: attendance,
                                       refresh: { refresh += 1 }, refreshDisabled: checking)
-                    NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
+                    NavigationLink { ClassroomQuestionsView(model: model.quiz) } label: {
+                        NavigationRowLabel { Text("课堂题目") }
+                    }
+                    .glassNavigationInteraction()
                     if model.connection != "课堂已连接" && !model.isLessonFinished {
                         Button("重新连接") { model.connect() }
                     }

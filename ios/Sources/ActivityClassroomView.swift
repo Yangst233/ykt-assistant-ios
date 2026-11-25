@@ -127,9 +127,14 @@ struct ClassroomPPTList: View {
                 ForEach(decks.indices, id: \.self) { index in
                     let deck = decks[index]
                     let title = deck.field("title")
-                    Button(title.isEmpty ? "课件" : title, systemImage: "slides") {
+                    Button {
                         open(deck.field("presentationId"), title.isEmpty ? "课件" : title)
+                    } label: {
+                        NavigationRowLabel(showsArrowInNativeList: true) {
+                            Label(title.isEmpty ? "课件" : title, systemImage: "slides")
+                        }
                     }
+                    .glassNavigationInteraction()
                 }
             } else {
                 Text("暂无课件信息").foregroundStyle(.secondary)

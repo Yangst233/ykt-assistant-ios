@@ -11,8 +11,11 @@ struct ClassroomQuestionsView: View {
                 NavigationLink {
                     QuestionView(model: model, id: q.id)
                 } label: {
-                    Label("题目 \(index + 1)", systemImage: q.submitted ? "checkmark.circle" : "questionmark.circle")
+                    NavigationRowLabel {
+                        Label("题目 \(index + 1)", systemImage: q.submitted ? "checkmark.circle" : "questionmark.circle")
+                    }
                 }
+                .glassNavigationInteraction()
             }
         }
         .wallpaperSurface()
