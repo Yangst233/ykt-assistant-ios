@@ -23,6 +23,19 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 }
 
+enum PPTPreload: Int, CaseIterable, Identifiable {
+    case one = 1, five = 5, ten = 10, entire = 0
+
+    var id: Self { self }
+    var title: String { self == .entire ? "整个 PPT" : "\(rawValue) 页" }
+
+    func pages(after page: Int, total: Int) -> [Range<Int>] {
+        let forward = (page + 1)..<total
+        if self == .entire { return [forward, 0..<page] }
+        return [forward.prefix(rawValue)]
+    }
+}
+
 @MainActor
 final class AppAppearance: ObservableObject {
     @Published var theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "appTheme") ?? "") ?? .system {
@@ -38,6 +51,9 @@ final class AppAppearance: ObservableObject {
     }
     @Published var wallpaperOverlayOpacity = UserDefaults.standard.object(forKey: "wallpaperOverlayOpacity") as? Double ?? 0.58 {
         didSet { UserDefaults.standard.set(wallpaperOverlayOpacity, forKey: "wallpaperOverlayOpacity") }
+    }
+    @Published var pptPreload = PPTPreload(rawValue: UserDefaults.standard.object(forKey: "pptPreloadPageCount") as? Int ?? 1) ?? .one {
+        didSet { UserDefaults.standard.set(pptPreload.rawValue, forKey: "pptPreloadPageCount") }
     }
     @Published var cachePPT = UserDefaults.standard.object(forKey: "cachePPT") as? Bool ?? true {
         didSet {

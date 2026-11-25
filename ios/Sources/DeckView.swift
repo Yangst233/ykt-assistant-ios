@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import CryptoKit
 
 @MainActor
 struct DeckView: View {
@@ -11,6 +12,7 @@ struct DeckView: View {
     var retryFollow: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appearance: AppAppearance
+    @StateObject private var preloadStore = PPTPreloadStore()
     @State private var index = 0
     @State private var image: UIImage?
     @State private var error: String?
@@ -30,31 +32,37 @@ struct DeckView: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                slideViewport
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let followTeacher {
-                    Toggle("跟随老师", isOn: followTeacher)
-                        .padding(.horizontal)
-                    if let followError {
+            GeometryReader { bounds in
+                let landscape = bounds.size.width > bounds.size.height
+                VStack {
+                    if landscape {
+                        landscapeViewport
+                    } else {
+                        slideViewport
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if let followTeacher {
+                            Toggle("跟随老师", isOn: followTeacher).padding(.horizontal)
+                        }
+                        pageControls
+                    }
+                    if followTeacher != nil, let followError {
                         Text(followError).font(.footnote).foregroundStyle(.secondary)
                         Button("重试同步") { retryFollow?() }
                     }
-                }
-                pageControls
-                if exporting {
-                    ProgressView(value: Double(downloadPage.map { $0 - 1 } ?? exportTotal),
-                                 total: Double(exportTotal)) {
-                        if let page = downloadPage {
-                            Text("正在下载第 \(page) 页，共 \(exportTotal) 页")
-                        } else {
-                            Text(exportPPTX ? "正在生成 PPTX…" : "正在整理 ZIP…")
+                    if exporting {
+                        ProgressView(value: Double(downloadPage.map { $0 - 1 } ?? exportTotal),
+                                     total: Double(exportTotal)) {
+                            if let page = downloadPage {
+                                Text("正在下载第 \(page) 页，共 \(exportTotal) 页")
+                            } else {
+                                Text(exportPPTX ? "正在生成 PPTX…" : "正在整理 ZIP…")
+                            }
                         }
+                        .padding(.horizontal)
+                        Button("取消导出") { operation?.cancel() }
                     }
-                    .padding(.horizontal)
-                    Button("取消导出") { operation?.cancel() }
+                    if let share { ShareLink(item: share) { Label("分享导出文件", systemImage: "square.and.arrow.up") } }
                 }
-                if let share { ShareLink(item: share) { Label("分享导出文件", systemImage: "square.and.arrow.up") } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { readerBackground }
@@ -68,7 +76,10 @@ struct DeckView: View {
                         Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exporting)
                         Button("导出 ZIP", systemImage: "archivebox") { export(deck, pptx: false, name: nil) }.disabled(exporting)
                         Button("重新载入当前页", systemImage: "arrow.clockwise") {
-                            if let key = slideCacheKey { appearance.removeCachedPPTImage(key) }
+                            if let key = slideCacheKey {
+                                appearance.removeCachedPPTImage(key)
+                                preloadStore.remove(key)
+                            }
                             retry += 1
                         }
                     }
@@ -82,19 +93,23 @@ struct DeckView: View {
             }
             .task(id: "\(deck.id):\(index):\(retry)") {
                 zoom = 1
-                guard deck.slides.indices.contains(index), let key = slideCacheKey else { image = nil; return }
-                if let cached = appearance.cachedPPTImage(key) {
+                let current = index
+                guard let key = cacheKey(for: current) else { image = nil; return }
+                if let cached = cachedPage(key) {
                     image = cached
+                    await preloadPages(after: current)
                     return
                 }
                 image = nil
-                let urls = deck.slides[index]
+                let urls = deck.slides[current]
                 do {
                     let data = try await api.slideImage(urls)
                     try Task.checkCancellation()
                     guard let bitmap = UIImage(data: data) else { throw RainError.invalid("课件图片") }
                     appearance.cachePPTImage(bitmap, key: key)
+                    if appearance.cachePPT && appearance.pptPreload == .entire { preloadStore.store(data, key: key) }
                     image = bitmap
+                    await preloadPages(after: current)
                 } catch {
                     if !Task.isCancelled { self.error = error.localizedDescription }
                 }
@@ -145,9 +160,40 @@ struct DeckView: View {
         }
     }
 
-    private var slideCacheKey: String? {
-        guard deck.slides.indices.contains(index) else { return nil }
-        return ([api.service.rawValue, api.userID] + deck.slides[index]).joined(separator: "\n")
+    private var slideCacheKey: String? { cacheKey(for: index) }
+
+    private func cacheKey(for page: Int) -> String? {
+        guard deck.slides.indices.contains(page) else { return nil }
+        return ([api.service.rawValue, api.userID] + deck.slides[page]).joined(separator: "\n")
+    }
+
+    private func cachedPage(_ key: String) -> UIImage? {
+        guard appearance.cachePPT else { return nil }
+        if let cached = appearance.cachedPPTImage(key) { return cached }
+        guard let image = preloadStore.image(key) else { return nil }
+        appearance.cachePPTImage(image, key: key)
+        return image
+    }
+
+    private func preloadPages(after page: Int) async {
+        guard appearance.cachePPT else { return }
+        let ranges = appearance.pptPreload.pages(after: page, total: deck.slides.count)
+        for range in ranges {
+            for next in range {
+                guard appearance.cachePPT, !Task.isCancelled else { return }
+                guard let key = cacheKey(for: next),
+                      !preloadStore.contains(key) else { continue }
+                if let cached = appearance.cachedPPTImage(key),
+                   let data = cached.pngData() {
+                    preloadStore.store(data, key: key)
+                    continue
+                }
+                guard let data = try? await api.slideImage(deck.slides[next]), !Task.isCancelled,
+                      appearance.cachePPT, let bitmap = UIImage(data: data) else { continue }
+                preloadStore.store(data, key: key)
+                appearance.cachePPTImage(bitmap, key: key)
+            }
+        }
     }
 
     private var readerBackground: some View {
@@ -207,6 +253,44 @@ struct DeckView: View {
     private func movePage(by offset: Int) {
         guard followTeacher?.wrappedValue != true, deck.slides.indices.contains(index + offset) else { return }
         index += offset
+    }
+
+    private var landscapeViewport: some View {
+        slideViewport
+            .padding(.horizontal, 56)
+            .overlay(alignment: .leading) {
+                landscapePageButton("上一页", icon: "chevron.left", offset: -1)
+                    .padding(.leading, 8)
+            }
+            .overlay(alignment: .trailing) {
+                landscapePageButton("下一页", icon: "chevron.right", offset: 1)
+                    .padding(.trailing, 8)
+            }
+            .overlay(alignment: .bottomLeading) {
+                pageCount.padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if let followTeacher {
+                    Toggle("跟随老师", isOn: followTeacher)
+                        .fixedSize()
+                        .controlSize(.small)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        .padding(8)
+                }
+            }
+    }
+
+    @ViewBuilder private func landscapePageButton(_ title: String, icon: String, offset: Int) -> some View {
+        if #available(iOS 26.0, *) {
+            pageButton(title, icon: icon, offset: offset)
+                .glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            pageButton(title, icon: icon, offset: offset)
+                .background(.regularMaterial, in: Circle())
+        }
     }
 
     @ViewBuilder private var pageControls: some View {
@@ -298,6 +382,34 @@ struct DeckView: View {
     }
 }
 
+
+private final class PPTPreloadStore: ObservableObject {
+    private let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+    deinit { try? FileManager.default.removeItem(at: root) }
+
+    func contains(_ key: String) -> Bool {
+        FileManager.default.fileExists(atPath: file(key).path)
+    }
+
+    func image(_ key: String) -> UIImage? { UIImage(contentsOfFile: file(key).path) }
+
+    func remove(_ key: String) { try? FileManager.default.removeItem(at: file(key)) }
+
+    func store(_ data: Data, key: String) {
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try data.write(to: file(key), options: [.atomic, .completeFileProtection])
+        } catch {
+            // The reader still works when there is no room for preloaded pages.
+        }
+    }
+
+    private func file(_ key: String) -> URL {
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        return root.appendingPathComponent(digest)
+    }
+}
 
 private struct ExportShare: Identifiable {
     let file: URL

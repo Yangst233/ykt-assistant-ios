@@ -300,6 +300,12 @@ struct Home: View {
             AppearanceSettings()
             Section("课件") {
                 Toggle("缓存 PPT", isOn: $appearance.cachePPT)
+                if appearance.cachePPT {
+                    SettingsPickerRow("预加载 PPT", value: appearance.pptPreload.title, selection: $appearance.pptPreload) {
+                        ForEach(PPTPreload.allCases) { option in Text(option.title).tag(option) }
+                    }
+                    .ownsGlassRowLayout()
+                }
             }
         }
         .wallpaperSurface()
