@@ -31,7 +31,8 @@ final class AppModel: ObservableObject {
     @Published var courses: [JSON] = []
     @Published var live: [JSON] = []
     @Published var feed: [JSON] = []
-    @Published var report: JSON?
+    @Published private(set) var loadingFeed = false
+    @Published private(set) var feedError: String?
     @Published var qr: UIImage?
     @Published var loginStatus: String?
     @Published var error: String?
@@ -49,6 +50,7 @@ final class AppModel: ObservableObject {
     private static let activeServiceKey = "activeRainService"
     private static let activeAccountKey = "activeRainAccount"
 
+    private var feedRequest: UUID?
     private var cursor: String?
     private var seenCursors = Set<String>()
     private var work: Task<Void, Never>?
@@ -119,10 +121,12 @@ final class AppModel: ObservableObject {
         livePage = ""
         qr = nil
         deck = nil
-        report = nil
         courses = []
         live = []
         feed = []
+        feedRequest = nil
+        loadingFeed = false
+        feedError = nil
         cursor = nil
         seenCursors = []
         canPage = true
@@ -420,18 +424,34 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
 
-    func loadFeed(reset: Bool) async throws {
-        guard let api, reset || canPage else { return }
-        var body: JSON = ["size": 10, "type": [], "beginTime": NSNull(), "endTime": NSNull()]
-        if !reset, let cursor { body["searchAfter"] = cursor }
-        let page = try await api.request("/api/v3/activities/received/", body: body).0.rows("data")
-        try Task.checkCancellation()
-        if reset { feed = []; seenCursors = [] }
-        var keys = Set(feed.map(feedKey))
-        feed += page.filter { keys.insert(feedKey($0)).inserted }
-        cursor = page.last?.field("sort")
-        canPage = cursor.map { !$0.isEmpty && seenCursors.insert($0).inserted } ?? false
-        try saveSession()
+    func refreshFeed(reset: Bool) async {
+        guard let api, feedRequest == nil, reset || canPage else { return }
+        let requestID = UUID()
+        feedRequest = requestID
+        loadingFeed = true
+        feedError = nil
+        defer {
+            if feedRequest == requestID {
+                feedRequest = nil
+                loadingFeed = false
+            }
+        }
+
+        do {
+            var body: JSON = ["size": 10, "type": [], "beginTime": NSNull(), "endTime": NSNull()]
+            if !reset, let cursor { body["searchAfter"] = cursor }
+            let page = try await api.request("/api/v3/activities/received/", body: body).0.rows("data")
+            try Task.checkCancellation()
+            guard feedRequest == requestID else { return }
+            if reset { feed = []; seenCursors = [] }
+            var keys = Set(feed.map(feedKey))
+            feed += page.filter { keys.insert(feedKey($0)).inserted }
+            cursor = page.last?.field("sort")
+            canPage = cursor.map { !$0.isEmpty && seenCursors.insert($0).inserted } ?? false
+            try saveSession()
+        } catch {
+            if feedRequest == requestID && !Task.isCancelled { feedError = error.localizedDescription }
+        }
     }
 
     private func feedKey(_ item: JSON) -> String {
@@ -439,20 +459,25 @@ final class AppModel: ObservableObject {
         return [item.field("id"), item.field("sort")].joined(separator: ":")
     }
 
-    func loadReport(_ id: String) {
-        report = nil
-        run {
-            guard let api = self.api, RainAPI.validLesson(id) else { throw RainError.invalid("课堂 ID") }
-            let info = try await api.classroomReport(.info, lessonID: id)
-            let detail = try await api.classroomReport(.detail, lessonID: id)
-            try Task.checkCancellation()
-            self.report = ["id": id, "info": info, "detail": detail]
-        }
-    }
-
     func showLiveDeck(_ deck: Deck) {
         guard let context = deck.live, context.lessonID == lesson?.id, context.presentationID == presentation else { return }
         self.deck = deck
+    }
+
+    func openClassroomPPT(id: String, title: String, lessonID: String) {
+        guard !id.isEmpty else { return }
+        guard let lesson, lesson.id == lessonID, !isLessonFinished else {
+            openDeck(id: id, title: title, historical: lessonID)
+            return
+        }
+        run {
+            guard let api = self.api else { return }
+            let page = self.presentation == id ? Int(self.livePage) : nil
+            let deck = try await api.liveDeck(presentation: id, lesson: lesson, page: page)
+            try Task.checkCancellation()
+            guard self.lesson?.id == lessonID else { return }
+            self.deck = deck
+        }
     }
 
     func openDeck(id: String, title: String, historical: String) {

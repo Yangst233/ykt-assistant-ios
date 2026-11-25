@@ -27,6 +27,7 @@ struct Home: View {
 
     @State private var tab: HomeTab = .live
     @State private var classroomPath: [ClassroomRoute] = []
+    @State private var activityPath: [ActivityClassroomRoute] = []
     @State private var showingJoin = false
     @State private var pendingJoin: String?
     @State private var classroomSearch = ""
@@ -57,8 +58,13 @@ struct Home: View {
             }
             .tabItem { Label("所有课堂", systemImage: "books.vertical") }
             .tag(HomeTab.all)
-            NavigationStack {
-                activities.navigationTitle("动态").toolbar { requestToolbar }
+            NavigationStack(path: $activityPath) {
+                activities
+                    .navigationTitle("动态")
+                    .toolbar { requestToolbar }
+                    .navigationDestination(for: ActivityClassroomRoute.self) { route in
+                        ActivityClassroomView(model: model, route: route)
+                    }
             }
             .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
             .tag(HomeTab.activities)
@@ -74,7 +80,15 @@ struct Home: View {
             classroomPath = [ClassroomRoute(id: lesson.id, courseName: row.map(courseName) ?? "")]
             tab = .live
         }
-        .onChange(of: model.selected) { _, _ in classroomPath = [] }
+        .onChange(of: model.selected) { _, _ in
+            classroomPath = []
+            activityPath = []
+            course = ""
+            type = ""
+        }
+        .task(id: model.api.map(ObjectIdentifier.init)) {
+            await model.refreshFeed(reset: true)
+        }
         .sheet(isPresented: $showingJoin, onDismiss: {
             if let value = pendingJoin {
                 pendingJoin = nil
@@ -120,7 +134,7 @@ struct Home: View {
     }
 
     private var liveClassrooms: some View {
-        List {
+        MaterialList {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
             } else if model.live.isEmpty && !model.busy {
@@ -151,7 +165,7 @@ struct Home: View {
     }
 
     private var allClassrooms: some View {
-        List {
+        MaterialList {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
             } else {
@@ -184,7 +198,7 @@ struct Home: View {
     }
 
     private var activities: some View {
-        List {
+        MaterialList {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle")
             } else {
@@ -199,28 +213,33 @@ struct Home: View {
                         Text("课堂").tag("14")
                         Text("作业").tag("5")
                     }
-                    Button("刷新动态") { model.run { try await model.loadFeed(reset: true) } }
+                    Button("刷新动态") { Task { await model.refreshFeed(reset: true) } }
+                        .disabled(model.loadingFeed)
                 }
-                if let report = model.report { reportSection(report) }
+                if let error = model.feedError { Text(error).foregroundStyle(.secondary) }
+                if model.loadingFeed && model.feed.isEmpty { ProgressView("正在刷新动态") }
                 ForEach(model.feed.indices, id: \.self) { index in
                     let item = model.feed[index]
                     if (type.isEmpty || item.field("coursewareType") == type)
                         && (course.isEmpty || item.field("courseName") == course) {
                         if item.field("coursewareType") == "14" {
-                            Button { model.loadReport(item.field("coursewareId")) } label: { activityLabel(item) }
+                            NavigationLink(value: ActivityClassroomRoute(
+                                id: item.field("coursewareId"),
+                                title: item.field("coursewareTitle").nonempty ?? item.field("courseName")
+                            )) { activityLabel(item) }
                         } else {
                             activityLabel(item)
                         }
                     }
                 }
                 if model.canPage && !model.feed.isEmpty {
-                    Button("加载更多") { model.run { try await model.loadFeed(reset: false) } }
+                    Button("加载更多") { Task { await model.refreshFeed(reset: false) } }
+                        .disabled(model.loadingFeed)
                 }
             }
         }
         .wallpaperSurface()
-        .onChange(of: model.selected) { _, _ in course = ""; type = "" }
-        .refreshable { model.run { try await model.loadFeed(reset: true) } }
+        .refreshable { await model.refreshFeed(reset: true) }
     }
 
     private func activityLabel(_ row: JSON) -> some View {
@@ -234,34 +253,8 @@ struct Home: View {
         }
     }
 
-    private func reportSection(_ report: JSON) -> some View {
-        let info = (report["info"] as? JSON) ?? [:]
-        let detail = (report["detail"] as? JSON) ?? [:]
-        let attendance = (detail["detail"] as? JSON) ?? [:]
-        let decks = (detail["presentation"] as? [JSON]) ?? []
-        return Section(info.field("lessonName").nonempty ?? "课堂报告") {
-            Text(info.field("teacherName"))
-            if attendance.field("valid") == "1", let ms = Double(attendance.field("checkInTime")), ms > 0 {
-                Label("已签到", systemImage: "checkmark.circle")
-                Text(Date(timeIntervalSince1970: ms / 1000), format: .dateTime)
-                if let channel = attendance.field("checkInName").nonempty { Text(channel) }
-            } else if let end = Double(info.field("end")), end > 0, end / 1000 <= Date().timeIntervalSince1970 {
-                Text("未签到")
-            } else {
-                Text("签到待确认")
-            }
-            ForEach(decks.indices, id: \.self) { index in
-                let deck = decks[index]
-                let title = deck.field("title").nonempty ?? "课件"
-                Button(title) {
-                    model.openDeck(id: deck.field("presentationId"), title: title, historical: report.field("id"))
-                }
-            }
-        }
-    }
-
     private var settings: some View {
-        List {
+        MaterialList {
             Picker("服务", selection: Binding(get: { model.service }, set: model.switchService)) {
                 ForEach(Service.allCases) { Text($0.title).tag($0) }
             }
@@ -317,7 +310,7 @@ private struct JoinClassroomSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            MaterialForm {
                 TextField("课堂 ID 或课堂二维码链接", text: $input, axis: .vertical)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)

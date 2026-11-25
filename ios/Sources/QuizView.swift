@@ -3,7 +3,7 @@ import SwiftUI
 struct ClassroomQuestionsView: View {
     @ObservedObject var model: QuizModel
     var body: some View {
-        List {
+        MaterialList {
             if model.questions.isEmpty {
                 ContentUnavailableView("尚未收到课堂题目", systemImage: "questionmark.bubble")
             }
@@ -33,7 +33,7 @@ struct QuestionView: View {
     @State private var confirmRound: UUID?
 
     var body: some View {
-        List {
+        MaterialList {
             if let q = model.question(id) {
                 if let spec = q.specification {
                     Section {
@@ -196,7 +196,7 @@ struct AISettingsView: View {
     @State private var loaded = false
 
     var body: some View {
-        Form {
+        MaterialForm {
             Section("服务配置") {
                 TextField("HTTPS 接口地址", text: $configuration.address).keyboardType(.URL)
                 TextField("模型名称", text: $configuration.model)

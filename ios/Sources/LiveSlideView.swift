@@ -38,8 +38,7 @@ struct LiveSlideView: View {
                         .padding(.horizontal, 14).padding(.vertical, 12)
                     }
                     .foregroundStyle(.primary)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .standaloneContainer(cornerRadius: 20)
                     .contentShape(RoundedRectangle(cornerRadius: 20))
                 }
                 .buttonStyle(.plain)

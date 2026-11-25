@@ -9,8 +9,10 @@ struct ClassroomRoute: Hashable {
 struct ClassroomDetailView: View {
     @ObservedObject var model: AppModel
     let route: ClassroomRoute
+    @Environment(\.colorScheme) private var colorScheme
     @State private var info: JSON?
-    @State private var attendance = "正在查询…"
+    @State private var report: JSON?
+    @State private var attendanceFailed = false
     @State private var checking = false
     @State private var refresh = 0
 
@@ -26,7 +28,7 @@ struct ClassroomDetailView: View {
     }
 
     var body: some View {
-        List {
+        MaterialList {
             if let lesson = model.lesson, lesson.id == route.id, let api = model.api {
                 if !model.isLessonFinished {
                     Section("正在放映的课件") {
@@ -38,6 +40,7 @@ struct ClassroomDetailView: View {
                                 .id(model.presentation)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
+                                .standaloneContainerRow()
                         }
                     }
                 }
@@ -47,26 +50,24 @@ struct ClassroomDetailView: View {
                         Spacer(minLength: 8)
                         Text(connectionLabel)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(model.connection == "课堂已连接" ? Color.green : Color.secondary)
+                            .foregroundStyle(connectionForeground)
                             .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(.quaternary, in: Capsule())
+                            .background(connectionBackground, in: Capsule())
                     }
                     .accessibilityElement(children: .combine)
                     if model.connection.hasPrefix("连接中断") {
                         Text(model.connection).font(.footnote).foregroundStyle(.secondary)
                     }
-                    HStack {
-                        LabeledContent("签到状态", value: attendance)
-                        Button("刷新") { refresh += 1 }
-                            .buttonStyle(.borderless)
-                            .disabled(checking)
-                    }
+                    ClassroomMetadata(info: info, report: report, attendance: attendance,
+                                      refresh: { refresh += 1 }, refreshDisabled: checking)
                     NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
                     if model.connection != "课堂已连接" && !model.isLessonFinished {
                         Button("重新连接") { model.connect() }
                     }
                 }
-                .task(id: refresh) { await loadAttendance(api) }
+                ClassroomPPTList(report: report) { id, title in
+                    model.openClassroomPPT(id: id, title: title, lessonID: route.id)
+                }
             } else {
                 ContentUnavailableView("课堂连接不可用", systemImage: "person.crop.circle.badge.exclamationmark",
                                        description: Text("返回列表重新进入课堂。"))
@@ -75,6 +76,10 @@ struct ClassroomDetailView: View {
         .wallpaperSurface()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: AttendanceRequest(lessonID: model.lesson?.id, refresh: refresh)) {
+            guard model.lesson?.id == route.id, let api = model.api else { return }
+            await loadAttendance(api)
+        }
         .task(id: model.lesson?.id) {
             guard model.lesson?.id == route.id, let api = model.api else { return }
             do {
@@ -92,21 +97,40 @@ struct ClassroomDetailView: View {
         return model.connection.isEmpty ? "连接已暂停" : model.connection
     }
 
+    private var connectionForeground: Color {
+        guard model.connection == "课堂已连接" else { return .secondary }
+        return colorScheme == .dark ? Color(red: 0.63, green: 0.92, blue: 0.72)
+            : Color(red: 0.08, green: 0.35, blue: 0.20)
+    }
+
+    private var connectionBackground: Color {
+        guard model.connection == "课堂已连接" else { return Color(uiColor: .quaternarySystemFill) }
+        return colorScheme == .dark ? Color(red: 0.12, green: 0.27, blue: 0.18)
+            : Color(red: 0.87, green: 0.96, blue: 0.90)
+    }
+
+    private var attendance: String {
+        if checking { return "正在查询…" }
+        if attendanceFailed { return "暂无法查询" }
+        guard let report else { return "正在查询…" }
+        return ClassroomMetadata.status(info: info, report: report, finished: model.isLessonFinished)
+    }
+
+    private struct AttendanceRequest: Equatable {
+        let lessonID: String?
+        let refresh: Int
+    }
+
     private func loadAttendance(_ api: RainAPI) async {
         checking = true
-        attendance = "正在查询…"
+        attendanceFailed = false
         defer { checking = false }
         do {
             let data = try await api.classroomReport(.detail, lessonID: route.id)
             try Task.checkCancellation()
-            let detail = try data.object("detail")
-            if detail.field("valid") == "1", let time = Double(detail.field("checkInTime")), time > 0 {
-                attendance = "已签到"
-            } else {
-                attendance = model.isLessonFinished ? "未签到" : "签到待确认"
-            }
+            report = data
         } catch {
-            if !Task.isCancelled { attendance = "暂无法查询" }
+            if !Task.isCancelled { attendanceFailed = true }
         }
     }
 }

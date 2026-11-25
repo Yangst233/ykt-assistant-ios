@@ -102,7 +102,7 @@ struct DeckView: View {
             }
             .sheet(isPresented: Binding(get: { namingDeck != nil }, set: { if !$0 { namingDeck = nil } })) {
                 NavigationStack {
-                    Form {
+                    MaterialForm {
                         TextField("PPTX 文件名", text: $exportName)
                     }
                     .wallpaperSurface()

@@ -28,6 +28,14 @@ final class AppAppearance: ObservableObject {
     @Published var theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "appTheme") ?? "") ?? .system {
         didSet { UserDefaults.standard.set(theme.rawValue, forKey: "appTheme") }
     }
+    @Published var containerMaterial = ContainerMaterial(
+        rawValue: UserDefaults.standard.string(forKey: "containerMaterial") ?? ""
+    ) ?? .standard {
+        didSet { UserDefaults.standard.set(containerMaterial.rawValue, forKey: "containerMaterial") }
+    }
+    @Published var wallpaperOverlayOpacity = UserDefaults.standard.object(forKey: "wallpaperOverlayOpacity") as? Double ?? 0.58 {
+        didSet { UserDefaults.standard.set(wallpaperOverlayOpacity, forKey: "wallpaperOverlayOpacity") }
+    }
     @Published private(set) var wallpaper: UIImage?
 
     init() {
@@ -76,9 +84,20 @@ final class AppAppearance: ObservableObject {
 private struct WallpaperSurface: ViewModifier {
     @EnvironmentObject private var appearance: AppAppearance
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var hidesScrollBackground: Bool {
+        if appearance.wallpaper != nil { return true }
+        if #available(iOS 18.0, *) {
+            return appearance.containerMaterial != .standard && !reduceTransparency && contrast != .increased
+        }
+        return false
+    }
+
     func body(content: Content) -> some View {
         content
-            .scrollContentBackground(appearance.wallpaper == nil ? .automatic : .hidden)
+            .scrollContentBackground(hidesScrollBackground ? .hidden : .automatic)
             .background {
                 if let image = appearance.wallpaper {
                     GeometryReader { bounds in
@@ -86,10 +105,12 @@ private struct WallpaperSurface: ViewModifier {
                             .frame(width: bounds.size.width, height: bounds.size.height)
                             .clipped()
                     }
-                    .overlay(Color(uiColor: .systemBackground).opacity(0.58))
+                    .overlay(Color(uiColor: .systemBackground).opacity(appearance.wallpaperOverlayOpacity))
                     .ignoresSafeArea()
                     .accessibilityHidden(true)
                     .allowsHitTesting(false)
+                } else if hidesScrollBackground {
+                    Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
                 }
             }
     }
@@ -112,12 +133,38 @@ struct AppearanceSettings: View {
                     Text(theme.title).tag(theme)
                 }
             }
+            Picker("容器材质", selection: $appearance.containerMaterial) {
+                ForEach(ContainerMaterial.allCases) { material in
+                    Text(material.title).tag(material)
+                }
+            }
             PhotosPicker(selection: $selection, matching: .images) {
                 Label(appearance.wallpaper == nil ? "选择壁纸" : "更换壁纸", systemImage: "photo")
             }
             .disabled(loading)
+            .task(id: selection) {
+                guard let selection else { return }
+                loading = true
+                defer {
+                    if !Task.isCancelled {
+                        loading = false
+                        self.selection = nil
+                    }
+                }
+                do { try await appearance.setWallpaper(selection) }
+                catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            }
+            .alert("壁纸", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
             if loading { ProgressView("正在载入壁纸") }
             if appearance.wallpaper != nil {
+                VStack(alignment: .leading) {
+                    LabeledContent("遮罩不透明度", value: appearance.wallpaperOverlayOpacity.formatted(.percent.precision(.fractionLength(0))))
+                    Slider(value: $appearance.wallpaperOverlayOpacity, in: 0...1, step: 0.01) {
+                        Text("遮罩不透明度")
+                    }
+                }
                 Button("移除壁纸", role: .destructive) {
                     do { try appearance.removeWallpaper() }
                     catch { self.error = error.localizedDescription }
@@ -125,20 +172,6 @@ struct AppearanceSettings: View {
                 .disabled(loading)
             }
         }
-        .task(id: selection) {
-            guard let selection else { return }
-            loading = true
-            defer {
-                if !Task.isCancelled {
-                    loading = false
-                    self.selection = nil
-                }
-            }
-            do { try await appearance.setWallpaper(selection) }
-            catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-        }
-        .alert("壁纸", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
+
     }
 }
