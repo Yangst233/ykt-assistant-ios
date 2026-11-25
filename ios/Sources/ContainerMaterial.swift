@@ -16,24 +16,49 @@ enum ContainerMaterial: String, CaseIterable, Identifiable {
 }
 
 private struct ContainerSurface<SurfaceShape: Shape>: ViewModifier {
+    @EnvironmentObject private var appearance: AppAppearance
+    @Environment(\.colorScheme) private var colorScheme
     let material: ContainerMaterial
     let shape: SurfaceShape
 
     func body(content: Content) -> some View {
         content.background {
-            switch material {
-            case .standard:
-                shape.fill(Color(uiColor: .secondarySystemGroupedBackground))
-            case .frosted:
-                shape.fill(.ultraThinMaterial)
-            case .regularGlass, .clearGlass:
-                if #available(iOS 26.0, *) {
-                    shape.fill(.clear)
-                        .glassEffect(material == .regularGlass ? .regular : .clear, in: shape)
-                } else {
-                    shape.fill(material == .regularGlass ? Material.thin : Material.ultraThin)
+            ZStack {
+                baseSurface
+                if material != .standard && appearance.glassDensity > 0 {
+                    shape.fill(shade.opacity(appearance.glassDensity * maximumShade))
                 }
             }
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder private var baseSurface: some View {
+        switch material {
+        case .standard:
+            shape.fill(Color(uiColor: .secondarySystemGroupedBackground))
+        case .frosted:
+            shape.fill(.ultraThinMaterial)
+        case .regularGlass, .clearGlass:
+            if #available(iOS 26.0, *) {
+                shape.fill(.clear)
+                    .glassEffect(material == .regularGlass ? .regular : .clear, in: shape)
+            } else {
+                shape.fill(material == .regularGlass ? Material.thin : Material.ultraThin)
+            }
+        }
+    }
+
+    private var shade: Color { colorScheme == .dark ? .black : .white }
+
+    // Draw the shade above the glass sample and below the content. The glass still samples the wallpaper.
+    private var maximumShade: Double {
+        switch material {
+        case .standard: 0
+        case .regularGlass: 0.72
+        case .clearGlass: 0.82
+        case .frosted: 0.76
         }
     }
 }
@@ -80,7 +105,7 @@ struct MaterialList<Rows: View>: View {
     init(@ViewBuilder content: () -> Rows) { rows = content() }
 
     var body: some View {
-        List { MaterialSections(rows: rows) }
+        MaterialCollection(rows: rows, form: false)
     }
 }
 
@@ -90,58 +115,103 @@ struct MaterialForm<Rows: View>: View {
     init(@ViewBuilder content: () -> Rows) { rows = content() }
 
     var body: some View {
-        Form { MaterialSections(rows: rows) }
+        MaterialCollection(rows: rows, form: true)
     }
 }
 
-private struct MaterialSections<Rows: View>: View {
+private struct MaterialCollection<Rows: View>: View {
     @EnvironmentObject private var appearance: AppAppearance
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     let rows: Rows
+    let form: Bool
 
     var body: some View {
         if #available(iOS 18.0, *), appearance.containerMaterial != .standard,
            !reduceTransparency, contrast != .increased {
-            ForEach(sections: rows) { section in
-                Section {
-                    let elements = section.content
-                    ForEach(elements) { row in
-                        if row.containerValues.isStandaloneContainer {
-                            row.listRowBackground(Color.clear)
-                        } else {
-                            let top = row.id == elements.first?.id
-                            let bottom = row.id == elements.last?.id
-                            row.listRowBackground(RowSurface(material: appearance.containerMaterial, top: top, bottom: bottom))
-                        }
-                    }
-                } header: {
-                    section.header
-                } footer: {
-                    section.footer
-                }
-            }
+            MaterialScroll(rows: rows, material: appearance.containerMaterial)
+        } else if form {
+            Form { rows }
         } else {
-            rows
+            List { rows }
         }
     }
 }
 
-private struct RowSurface: View {
+@available(iOS 18.0, *)
+private struct MaterialScroll<Rows: View>: View {
+    @Environment(\.refresh) private var refresh
+    let rows: Rows
     let material: ContainerMaterial
-    let top: Bool
-    let bottom: Bool
 
     var body: some View {
-        let radius: CGFloat = if #available(iOS 26.0, *) { 24 } else { 12 }
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: top ? radius : 0,
-            bottomLeadingRadius: bottom ? radius : 0,
-            bottomTrailingRadius: bottom ? radius : 0,
-            topTrailingRadius: top ? radius : 0
-        )
-        Color.clear.containerSurface(material, in: shape)
-            .accessibilityHidden(true)
-            .allowsHitTesting(false)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                ForEach(sections: rows) { section in
+                    if !section.content.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !section.header.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) { section.header }
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16)
+                            }
+                            GlassSection(rows: section.content, material: material)
+                            if !section.footer.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) { section.footer }
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            if let refresh {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("刷新", systemImage: "arrow.clockwise") {
+                        Task { await refresh() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct GlassSection: View {
+    let rows: SubviewsCollection
+    let material: ContainerMaterial
+
+    var body: some View {
+        if rows.count == 1, let row = rows.first, row.containerValues.isStandaloneContainer {
+            row
+        } else {
+            let lastID = rows.last?.id
+            let radius: CGFloat = if #available(iOS 26.0, *) { 24 } else { 12 }
+            let shape = RoundedRectangle(cornerRadius: radius)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 0) {
+                        row
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal, 16)
+                        if row.id != lastID {
+                            Divider()
+                                .opacity(0.65)
+                                .padding(.leading, 16)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+            }
+            .containerSurface(material, in: shape)
+            .clipShape(shape)
+        }
     }
 }

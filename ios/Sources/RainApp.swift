@@ -278,6 +278,9 @@ struct Home: View {
                     .swipeActions {
                         Button("移除", role: .destructive) { model.delete(account) }
                     }
+                    .contextMenu {
+                        Button("移除账号", systemImage: "trash", role: .destructive) { model.delete(account) }
+                    }
                 }
             }
             Section {

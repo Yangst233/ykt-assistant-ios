@@ -33,6 +33,9 @@ final class AppAppearance: ObservableObject {
     ) ?? .standard {
         didSet { UserDefaults.standard.set(containerMaterial.rawValue, forKey: "containerMaterial") }
     }
+    @Published var glassDensity = UserDefaults.standard.object(forKey: "glassDensity") as? Double ?? 0.35 {
+        didSet { UserDefaults.standard.set(glassDensity, forKey: "glassDensity") }
+    }
     @Published var wallpaperOverlayOpacity = UserDefaults.standard.object(forKey: "wallpaperOverlayOpacity") as? Double ?? 0.58 {
         didSet { UserDefaults.standard.set(wallpaperOverlayOpacity, forKey: "wallpaperOverlayOpacity") }
     }
@@ -137,6 +140,15 @@ struct AppearanceSettings: View {
                 ForEach(ContainerMaterial.allCases) { material in
                     Text(material.title).tag(material)
                 }
+            }
+            if appearance.containerMaterial != .standard {
+                VStack(alignment: .leading, spacing: 6) {
+                    LabeledContent("玻璃浓度", value: appearance.glassDensity.formatted(.percent.precision(.fractionLength(0))))
+                    Slider(value: $appearance.glassDensity, in: 0...1, step: 0.01) {
+                        Text("玻璃浓度")
+                    }
+                }
+                .padding(.vertical, 6)
             }
             PhotosPicker(selection: $selection, matching: .images) {
                 Label(appearance.wallpaper == nil ? "选择壁纸" : "更换壁纸", systemImage: "photo")
