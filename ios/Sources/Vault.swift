@@ -8,6 +8,14 @@ struct Account: Codable, Identifiable {
     var cookieProperties: Data
     var lessons: [String: Lesson] = [:]
     var id: String { service.rawValue + ":" + userID }
+
+    static func forLaunch(_ accounts: [Account], service: Service?, selectedID: String?) -> Account? {
+        if let matching = accounts.first(where: { $0.id == selectedID && (service == nil || $0.service == service) }) {
+            return matching
+        }
+        // Older versions saved accounts but no active selection. New logins were appended.
+        return service == nil ? accounts.last : nil
+    }
 }
 
 enum Vault {

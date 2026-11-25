@@ -96,6 +96,17 @@ final class RainTests: XCTestCase {
         } catch RainError.business(50001, _) {}
     }
 
+    func testColdLaunchRestoresSavedSelectionAcrossServices() {
+        let standard = Account(service: .standard, userID: "12", name: "", cookieProperties: Data())
+        let pro = Account(service: .pro, userID: "12", name: "", cookieProperties: Data())
+        let accounts = [standard, pro]
+        XCTAssertEqual(Account.forLaunch(accounts, service: .standard, selectedID: standard.id)?.id, standard.id)
+        XCTAssertEqual(Account.forLaunch(accounts, service: nil, selectedID: nil)?.id, pro.id)
+        XCTAssertNil(Account.forLaunch(accounts, service: .changjiang, selectedID: pro.id))
+        XCTAssertNil(Account.forLaunch(accounts, service: .pro, selectedID: nil))
+        XCTAssertNil(Account.forLaunch([standard], service: .pro, selectedID: pro.id))
+    }
+
     func testCookieRoundTrip() throws {
         let properties: [HTTPCookiePropertyKey: Any] = [
             .name: "sessionid", .value: "test-value", .domain: "www.yuketang.cn", .path: "/", .secure: "TRUE"

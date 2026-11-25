@@ -27,6 +27,9 @@ final class AppModel: ObservableObject {
     @Published var deck: Deck?
     @Published var busy = false
     @Published var canPage = true
+    private static let activeServiceKey = "activeRainService"
+    private static let activeAccountKey = "activeRainAccount"
+
     private var cursor: String?
     private var seenCursors = Set<String>()
     private var work: Task<Void, Never>?
@@ -39,8 +42,15 @@ final class AppModel: ObservableObject {
     private(set) var api: RainAPI?
 
     init() {
-        do { accounts = try Vault.read() }
-        catch { self.error = error.localizedDescription }
+        do {
+            accounts = try Vault.read()
+            let defaults = UserDefaults.standard
+            let savedService = defaults.string(forKey: Self.activeServiceKey).flatMap(Service.init(rawValue:))
+            let account = Account.forLaunch(accounts, service: savedService,
+                                            selectedID: defaults.string(forKey: Self.activeAccountKey))
+            service = savedService ?? account?.service ?? .standard
+            if let account { select(account) }
+        } catch { self.error = error.localizedDescription }
     }
 
     func run(_ operation: @escaping @MainActor () async throws -> Void) {
@@ -67,9 +77,13 @@ final class AppModel: ObservableObject {
     }
 
     func switchService(_ service: Service) {
-        reset()
-        self.service = service
-        if let account = accounts.first(where: { $0.service == service }) { select(account) }
+        if let account = accounts.last(where: { $0.service == service }) {
+            select(account)
+        } else {
+            reset()
+            self.service = service
+            rememberSelection()
+        }
     }
 
     private func reset() {
@@ -95,14 +109,21 @@ final class AppModel: ObservableObject {
     func select(_ account: Account) {
         reset()
         service = account.service
-        run {
+        do {
             let api = RainAPI(service: account.service)
             api.cookies = try Vault.decodeCookies(account.cookieProperties)
             api.userID = account.userID
             self.api = api
-            self.selected = account.id
-            try await self.loadCourses()
-        }
+            selected = account.id
+            rememberSelection()
+            run { try await self.loadCourses() }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func rememberSelection() {
+        let defaults = UserDefaults.standard
+        defaults.set(service.rawValue, forKey: Self.activeServiceKey)
+        defaults.set(selected, forKey: Self.activeAccountKey)
     }
 
     func delete(_ account: Account) {
@@ -110,7 +131,10 @@ final class AppModel: ObservableObject {
             let remaining = accounts.filter { $0.id != account.id }
             try Vault.write(remaining)
             accounts = remaining
-            if selected == account.id { reset() }
+            if selected == account.id {
+                reset()
+                rememberSelection()
+            }
         } catch { self.error = error.localizedDescription }
     }
 
