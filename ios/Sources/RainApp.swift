@@ -242,8 +242,8 @@ struct Home: View {
                     Image(uiImage: qr).interpolation(.none).resizable().scaledToFit()
                         .padding(20).background(.white)
                         .accessibilityLabel("雨课堂登录二维码")
-                    Text("请使用微信扫描并确认。")
                 }
+                if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
         }
     }

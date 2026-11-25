@@ -69,6 +69,33 @@ final class RainTests: XCTestCase {
         }
     }
 
+    @MainActor func testQRUsesFreshRequestAndSameSessionForAuthorization() async throws {
+        let api = client()
+        MockHTTP.respond = { request in
+            switch request.url?.path {
+            case "/api/v3/user/login/pre-info":
+                XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-cache")
+                return (200, ["Set-Cookie": "sessionid=local-qr; Path=/; Secure"],
+                        Data(#"{"code":0,"data":{"token":"local-qr-token"}}"#.utf8))
+            case "/api/v3/user/login":
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "sessionid"), "local-qr")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "sessionid=local-qr")
+                return (200, [:], Data(#"{"code":50001}"#.utf8))
+            default:
+                XCTFail("Unexpected QR request")
+                return (404, [:], Data())
+            }
+        }
+        defer { MockHTTP.respond = nil }
+        let qr = try await api.request("/api/v3/user/login/pre-info").0.object("data")
+        do {
+            _ = try await api.request("/api/v3/user/login", body: ["token": qr.field("token")])
+            XCTFail("Expected expired QR")
+        } catch RainError.business(50001, _) {}
+    }
+
     func testCookieRoundTrip() throws {
         let properties: [HTTPCookiePropertyKey: Any] = [
             .name: "sessionid", .value: "test-value", .domain: "www.yuketang.cn", .path: "/", .secure: "TRUE"

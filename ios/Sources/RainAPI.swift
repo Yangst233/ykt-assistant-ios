@@ -127,6 +127,10 @@ final class RainAPI {
         target.queryItems = query.isEmpty ? nil : query
         guard let url = target.url else { throw RainError.invalid("URL") }
         var request = headers(url)
+        if path == "/api/v3/user/login/pre-info" {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        }
         if let bearer { request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization") }
         if let body {
             request.httpMethod = "POST"
@@ -224,6 +228,10 @@ final class RainAPI {
             }
             var request = headers(url)
             request.setValue("image/*", forHTTPHeaderField: "Accept")
+            if qr {
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 8
+            }
             let (bytes, response) = try await media.bytes(for: request)
             guard let response = response as? HTTPURLResponse else { throw RainError.invalid("图片响应") }
             if (300..<400).contains(response.statusCode), let next = response.value(forHTTPHeaderField: "Location") {

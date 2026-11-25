@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
     @Published var feed: [JSON] = []
     @Published var report: JSON?
     @Published var qr: UIImage?
+    @Published var loginStatus: String?
     @Published var error: String?
     @Published var pendingLesson: String?
     @Published var lesson: Lesson?
@@ -33,6 +34,7 @@ final class AppModel: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var foreground = true
     private var lessonFinished = false
+    private var loginBackgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var generation = UUID()
     private(set) var api: RainAPI?
 
@@ -55,6 +57,9 @@ final class AppModel: ObservableObject {
     }
 
     func cancel() {
+        endLoginBackgroundTask()
+        qr = nil
+        loginStatus = nil
         generation = UUID()
         work?.cancel()
         work = nil
@@ -110,37 +115,73 @@ final class AppModel: ObservableObject {
     }
 
     func login() {
-        qr = nil
         run {
-            let api = RainAPI(service: self.service)
-            let qrData = try await api.request("/api/v3/user/login/pre-info").0.object("data")
-            let token = qrData.field("token")
-            guard !token.isEmpty else { throw RainError.invalid("二维码 token") }
-            let content = qrData.field("qrContent")
-            if !content.isEmpty {
-                let filter = CIFilter.qrCodeGenerator()
-                filter.message = Data(content.utf8)
-                if let output = filter.outputImage?.transformed(by: .init(scaleX: 8, y: 8)),
-                   let bitmap = CIContext().createCGImage(output, from: output.extent) {
-                    self.qr = UIImage(cgImage: bitmap)
+            defer {
+                if !Task.isCancelled {
+                    self.qr = nil
+                    self.loginStatus = nil
+                    self.endLoginBackgroundTask()
                 }
             }
-            if self.qr == nil, !qrData.field("qrImage").isEmpty {
-                self.qr = try await UIImage(data: api.image(qrData.field("qrImage"), qr: true))
+            while true {
+                self.loginStatus = "正在获取登录二维码…"
+                let api = RainAPI(service: self.service)
+                let data = try await api.request("/api/v3/user/login/pre-info").0.object("data")
+                let token = data.field("token")
+                guard !token.isEmpty else { throw RainError.invalid("二维码 token") }
+                let image = try await self.loginImage(data, api: api)
+                try Task.checkCancellation()
+                self.qr = image
+                self.loginStatus = "请使用微信扫描并确认。"
+                do {
+                    _ = try await api.request("/api/v3/user/login", body: ["token": token])
+                } catch RainError.business(50001, _) {
+                    try Task.checkCancellation()
+                    self.qr = nil
+                    guard self.foreground else {
+                        throw RainError.business(50001, "")
+                    }
+                    self.loginStatus = "旧二维码已过期，正在获取新码…"
+                    try await Task.sleep(for: .seconds(1))
+                    continue
+                }
+                try await self.finishLogin(api)
+                return
             }
-            guard self.qr != nil else { throw RainError.invalid("二维码图片") }
-            defer { if !Task.isCancelled { self.qr = nil } }
-            _ = try await api.request("/api/v3/user/login", body: ["token": token])
-            let profile = try await api.profile()
-            try Task.checkCancellation()
-            var account = Account(service: api.service, userID: api.userID, name: profile.field("name"),
-                                  cookieProperties: try Vault.encodeCookies(api.cookies))
-            account.lessons = self.accounts.first { $0.id == account.id }?.lessons ?? [:]
-            let updated = self.accounts.filter { $0.id != account.id } + [account]
-            try Vault.write(updated)
-            self.accounts = updated
-            self.select(account)
         }
+    }
+
+    private func loginImage(_ data: JSON, api: RainAPI) async throws -> UIImage {
+        let address = data.field("qrImage").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !address.isEmpty {
+            do {
+                let bytes = try await api.image(address, qr: true)
+                if let image = UIImage(data: bytes) { return image }
+            } catch { try Task.checkCancellation() }
+        }
+        let content = data.field("qrContent").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { throw RainError.invalid("登录二维码图片") }
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(content.utf8)
+        guard let output = filter.outputImage?.transformed(by: .init(scaleX: 8, y: 8)),
+              let bitmap = CIContext().createCGImage(output, from: output.extent) else {
+            throw RainError.invalid("登录二维码图片")
+        }
+        return UIImage(cgImage: bitmap)
+    }
+
+    private func finishLogin(_ api: RainAPI) async throws {
+        qr = nil
+        loginStatus = "扫码已授权，正在获取账号信息…"
+        let profile = try await api.profile()
+        try Task.checkCancellation()
+        var account = Account(service: api.service, userID: api.userID, name: profile.field("name"),
+                              cookieProperties: try Vault.encodeCookies(api.cookies))
+        account.lessons = accounts.first { $0.id == account.id }?.lessons ?? [:]
+        let updated = accounts.filter { $0.id != account.id } + [account]
+        try Vault.write(updated)
+        accounts = updated
+        select(account)
     }
 
     func loadCourses() async throws {
@@ -212,11 +253,24 @@ final class AppModel: ObservableObject {
 
     func phase(_ phase: ScenePhase) {
         foreground = phase != .background
-        if foreground { connect() }
-        else {
-            if qr != nil { qr = nil; cancel() }
+        if foreground {
+            endLoginBackgroundTask()
+            connect()
+        } else {
+            if qr != nil && loginBackgroundTask == .invalid {
+                loginBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Rain QR authorization") {
+                    Task { @MainActor in self.cancel() }
+                }
+            }
             disconnect()
         }
+    }
+
+    private func endLoginBackgroundTask() {
+        guard loginBackgroundTask != .invalid else { return }
+        let task = loginBackgroundTask
+        loginBackgroundTask = .invalid
+        UIApplication.shared.endBackgroundTask(task)
     }
 
     private func disconnect() {
