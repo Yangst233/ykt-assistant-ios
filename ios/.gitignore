@@ -1,0 +1,6 @@
+Generated/
+*.xcodeproj/
+Build/
+Package/
+*.xcresult/
+*.ipa

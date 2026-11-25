@@ -1,0 +1,57 @@
+name: Build iOS
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Test on iOS simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for key in sorted(devices, reverse=True) if ".iOS-" in key for d in devices[key] if d["name"].startswith("iPhone")))')
+          xcodebuild test -scheme RainAssistant -destination "platform=iOS Simulator,id=$device" -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee simulator.log
+      - name: Build unsigned arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild build -scheme RainAssistant -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath Build ARCHS=arm64 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee device.log
+          mkdir -p Package/Payload
+          app=Build/Build/Products/Release-iphoneos/RainAssistant.app
+          test "$(lipo -archs "$app/RainAssistant")" = arm64
+          ditto "$app" Package/Payload/RainAssistant.app
+          (cd Package && /usr/bin/zip -qry RainAssistant-arm64-unsigned.ipa Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RainAssistant-arm64-unsigned
+          path: ios/Package/RainAssistant-arm64-unsigned.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: |
+            ios/TestResults.xcresult
+            ios/simulator.log
+            ios/device.log

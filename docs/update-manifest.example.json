@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "versionCode": 60,
+  "versionName": "4.0",
+  "forceUpdate": false,
+  "title": "雨课堂助手 4.0",
+  "description": "统一底部卡片的自适应高度，精简同步设置并补充 AI 答题提示。",
+  "downloadUrl": "",
+  "githubUrl": "",
+  "author": "FirmPluvia",
+  "projectUrl": "https://github.com/FirmPluvia/ykt_assistant"
+}
