@@ -5,6 +5,22 @@ struct Deck: Identifiable {
     let id = UUID()
     let title: String
     let slides: [[String]]
+    var live: LiveContext? = nil
+
+    struct LiveContext {
+        let lessonID: String
+        let presentationID: String
+        let initialPage: Int?
+    }
+
+    static func slideImages(_ rows: [JSON]) -> [[String]] {
+        rows.map { row in ["cover", "coverAlt", "thumbnail"].map(row.field).filter { !$0.isEmpty } }
+    }
+
+    func index(for page: Int?) -> Int? {
+        guard let page, page > 0, slides.indices.contains(page - 1) else { return nil }
+        return page - 1
+    }
 }
 
 @MainActor
@@ -21,6 +37,7 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var pendingLesson: String?
     @Published var lesson: Lesson?
+    @Published private(set) var classroomEntry = UUID()
     @Published var connection = ""
     @Published var presentation = ""
     @Published var livePage = ""
@@ -240,7 +257,12 @@ final class AppModel: ObservableObject {
             let id = try await api.lessonID(input)
             if let saved = self.accounts.first(where: { $0.id == self.selected })?.lessons[id],
                Date().timeIntervalSince(saved.created) < 24 * 3600 {
-                self.open(saved)
+                if self.lesson?.id == id {
+                    self.classroomEntry = UUID()
+                    self.connect()
+                } else {
+                    self.open(saved)
+                }
             } else { self.pendingLesson = id }
         }
     }
@@ -264,6 +286,7 @@ final class AppModel: ObservableObject {
         presentation = ""
         livePage = ""
         connect()
+        classroomEntry = UUID()
     }
 
     func leave() {
@@ -420,48 +443,34 @@ final class AppModel: ObservableObject {
         report = nil
         run {
             guard let api = self.api, RainAPI.validLesson(id) else { throw RainError.invalid("课堂 ID") }
-            let query = [URLQueryItem(name: "lesson_id", value: id),
-                         URLQueryItem(name: "front_time", value: String(Int64(Date().timeIntervalSince1970 * 1000)))]
-            let root = "/api/v3/classroom-report/student/"
-            let info = try await api.request(root + "lesson-info", query: query).0.object("data")
-            let detail = try await api.request(root + "detail", query: query).0.object("data")
-            for value in [info, detail] where value["lessonId"] != nil && value.field("lessonId") != id {
-                throw RainError.invalid("课堂报告关联")
-            }
+            let info = try await api.classroomReport(.info, lessonID: id)
+            let detail = try await api.classroomReport(.detail, lessonID: id)
             try Task.checkCancellation()
             self.report = ["id": id, "info": info, "detail": detail]
         }
     }
 
-    func openDeck(id: String, title: String, historical: String?) {
+    func showLiveDeck(_ deck: Deck) {
+        guard let context = deck.live, context.lessonID == lesson?.id, context.presentationID == presentation else { return }
+        self.deck = deck
+    }
+
+    func openDeck(id: String, title: String, historical: String) {
         run {
             guard let api = self.api, !id.isEmpty else { throw RainError.invalid("课件 ID") }
-            let rows: [JSON]
-            if let historical {
-                let data = try await api.request("/api/v3/classroom-report/student/ppt", query: [
-                    .init(name: "lesson_id", value: historical), .init(name: "presentationId", value: id)
-                ]).0.object("data")
-                if data["lessonId"] != nil && data.field("lessonId") != historical { throw RainError.invalid("课件课堂关联") }
-                if data["presentationId"] != nil && data.field("presentationId") != id { throw RainError.invalid("课件关联") }
-                rows = try data.rows("slideList").filter {
-                    ["1", "true"].contains($0.field("visible").lowercased())
-                }
-            } else {
-                guard let lesson = self.lesson else { throw RainError.invalid("课堂凭证") }
-                do {
-                    rows = try await api.liveSlides(presentation: id, lesson: lesson)
-                } catch RainError.http(let code) where code == 401 || code == 403 {
-                    try Task.checkCancellation()
-                    self.invalidateCredentials(lesson.id)
-                    return
-                }
+            let data = try await api.request("/api/v3/classroom-report/student/ppt", query: [
+                .init(name: "lesson_id", value: historical), .init(name: "presentationId", value: id)
+            ]).0.object("data")
+            if data["lessonId"] != nil && data.field("lessonId") != historical { throw RainError.invalid("课件课堂关联") }
+            if data["presentationId"] != nil && data.field("presentationId") != id { throw RainError.invalid("课件关联") }
+            let rows = try data.rows("slideList").filter {
+                ["1", "true"].contains($0.field("visible").lowercased())
             }
-            let slides = rows.map { row in
-                ["cover", "coverAlt", "thumbnail"].map(row.field).filter { !$0.isEmpty }
-            }
+            let slides = Deck.slideImages(rows)
             guard !slides.isEmpty, slides.allSatisfy({ !$0.isEmpty }) else { throw RainError.invalid("暂无可查看的课件页面") }
             try Task.checkCancellation()
-            self.deck = Deck(title: title, slides: slides)
+            let name = data.field("title")
+            self.deck = Deck(title: name.isEmpty ? title : name, slides: slides)
         }
     }
 }

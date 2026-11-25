@@ -1,0 +1,112 @@
+import SwiftUI
+
+struct ClassroomRoute: Hashable {
+    let id: String
+    let courseName: String
+}
+
+@MainActor
+struct ClassroomDetailView: View {
+    @ObservedObject var model: AppModel
+    let route: ClassroomRoute
+    @State private var info: JSON?
+    @State private var attendance = "正在查询…"
+    @State private var checking = false
+    @State private var refresh = 0
+
+    private var classroomName: String {
+        let name = info?.field("lessonName") ?? ""
+        return name.isEmpty ? (route.courseName.isEmpty ? "当前课堂" : route.courseName) : name
+    }
+
+    private var title: String {
+        if !route.courseName.isEmpty { return route.courseName }
+        let course = info?.field("courseName") ?? ""
+        return course.isEmpty ? classroomName : course
+    }
+
+    var body: some View {
+        List {
+            if let lesson = model.lesson, lesson.id == route.id, let api = model.api {
+                if !model.isLessonFinished {
+                    Section("正在放映的课件") {
+                        if model.presentation.isEmpty {
+                            Text("等待教师开始放映").foregroundStyle(.secondary)
+                        } else {
+                            LiveSlideView(api: api, lesson: lesson, presentation: model.presentation,
+                                          page: Int(model.livePage), open: model.showLiveDeck)
+                                .id(model.presentation)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                }
+                Section("当前课堂") {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(classroomName).font(.headline)
+                        Spacer(minLength: 8)
+                        Text(connectionLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(model.connection == "课堂已连接" ? Color.green : Color.secondary)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.quaternary, in: Capsule())
+                    }
+                    .accessibilityElement(children: .combine)
+                    if model.connection.hasPrefix("连接中断") {
+                        Text(model.connection).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        LabeledContent("签到状态", value: attendance)
+                        Button("刷新") { refresh += 1 }
+                            .buttonStyle(.borderless)
+                            .disabled(checking)
+                    }
+                    NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
+                    if model.connection != "课堂已连接" && !model.isLessonFinished {
+                        Button("重新连接") { model.connect() }
+                    }
+                }
+                .task(id: refresh) { await loadAttendance(api) }
+            } else {
+                ContentUnavailableView("课堂连接不可用", systemImage: "person.crop.circle.badge.exclamationmark",
+                                       description: Text("返回列表重新进入课堂。"))
+            }
+        }
+        .wallpaperSurface()
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: model.lesson?.id) {
+            guard model.lesson?.id == route.id, let api = model.api else { return }
+            do {
+                let value = try await api.classroomReport(.info, lessonID: route.id)
+                try Task.checkCancellation()
+                info = value
+            } catch {
+                // Course metadata remains usable when the server hasn't made the report available yet.
+            }
+        }
+    }
+
+    private var connectionLabel: String {
+        if model.connection.hasPrefix("连接中断") { return "连接中断" }
+        return model.connection.isEmpty ? "连接已暂停" : model.connection
+    }
+
+    private func loadAttendance(_ api: RainAPI) async {
+        checking = true
+        attendance = "正在查询…"
+        defer { checking = false }
+        do {
+            let data = try await api.classroomReport(.detail, lessonID: route.id)
+            try Task.checkCancellation()
+            let detail = try data.object("detail")
+            if detail.field("valid") == "1", let time = Double(detail.field("checkInTime")), time > 0 {
+                attendance = "已签到"
+            } else {
+                attendance = model.isLessonFinished ? "未签到" : "签到待确认"
+            }
+        } catch {
+            if !Task.isCancelled { attendance = "暂无法查询" }
+        }
+    }
+}

@@ -15,6 +15,7 @@ struct ClassroomQuestionsView: View {
                 }
             }
         }
+        .wallpaperSurface()
         .navigationTitle("课堂题目")
     }
 }
@@ -58,6 +59,7 @@ struct QuestionView: View {
                 ContentUnavailableView("题目已不可用", systemImage: "questionmark.circle")
             }
         }
+        .wallpaperSurface()
         .navigationTitle("课堂题目")
         .onChange(of: model.question(id)?.round, initial: true) { _, _ in
             if model.question(id)?.specification == nil { model.load(id) }
@@ -206,6 +208,7 @@ struct AISettingsView: View {
                 Text("使用支持 JSON 模式的 OpenAI 兼容 Chat Completions 接口。只有确认分析后才发送题目。")
             }
         }
+        .wallpaperSurface()
         .navigationTitle("AI 设置")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

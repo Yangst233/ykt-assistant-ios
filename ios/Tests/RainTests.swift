@@ -141,6 +141,47 @@ final class RainTests: XCTestCase {
         XCTAssertThrowsError(try QuizAI.parse(valid.replacingOccurrences(of: "[\"A\"]", with: "[\"Z\"]"), question: q, nonce: "local"))
     }
 
+    @MainActor func testLiveDeckKeepsUpstreamTitleAndUsesOneBasedTeacherPage() async throws {
+        let api = client()
+        MockHTTP.respond = { request in
+            XCTAssertEqual(request.url?.path, "/api/v3/lesson/presentation/fetch")
+            XCTAssertEqual(request.url?.query, "presentation_id=72")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer local-test")
+            let response = #"{"code":0,"data":{"id":"72","title":"第一讲","slides":[{"cover":"https://example.com/1"},{"cover":"https://example.com/2"}]}}"#
+            return (200, [:], Data(response.utf8))
+        }
+        defer { MockHTTP.respond = nil }
+        let lesson = Lesson(id: "123", bearer: "local-test", token: "local-ws", created: Date())
+        let deck = try await api.liveDeck(presentation: "72", lesson: lesson, page: 2)
+        XCTAssertEqual(deck.title, "第一讲")
+        XCTAssertEqual(deck.live?.lessonID, "123")
+        XCTAssertEqual(deck.index(for: deck.live?.initialPage), 1)
+        XCTAssertNil(deck.index(for: 0))
+        XCTAssertNil(deck.index(for: 3))
+    }
+
+    @MainActor func testAttendanceReportUsesAccountSessionAndRejectsDifferentLesson() async throws {
+        let api = client()
+        MockHTTP.respond = { request in
+            XCTAssertEqual(request.url?.path, "/api/v3/classroom-report/student/detail")
+            XCTAssertTrue(request.url?.query?.contains("lesson_id=123") == true)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            return (200, [:], Data(#"{"code":0,"data":{"lessonId":"456","detail":{}}}"#.utf8))
+        }
+        defer { MockHTTP.respond = nil }
+        do {
+            _ = try await api.classroomReport(.detail, lessonID: "123")
+            XCTFail("Expected mismatched lesson to be rejected")
+        } catch RainError.invalid(_) {}
+    }
+
+    func testPPTXNameUsesOneExtensionAndFitsFileComponent() {
+        XCTAssertEqual(DeckExport.fileStem("  课程：第一讲.PPTX ", fallback: "Slides"), "课程：第一讲")
+        XCTAssertEqual(DeckExport.fileStem("讲义/第一讲", fallback: "Slides"), "讲义_第一讲")
+        XCTAssertEqual(DeckExport.fileStem(" .pptx ", fallback: "文档"), "文档")
+        XCTAssertLessThanOrEqual(DeckExport.fileStem(String(repeating: "讲", count: 200), fallback: "Slides").utf8.count, 180)
+    }
+
     func testCookieRoundTrip() throws {
         let properties: [HTTPCookiePropertyKey: Any] = [
             .name: "sessionid", .value: "test-value", .domain: "www.yuketang.cn", .path: "/", .secure: "TRUE"

@@ -7,11 +7,14 @@ import UniformTypeIdentifiers
 @MainActor
 struct RainApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var appearance = AppAppearance()
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
             Home(model: model)
+                .environmentObject(appearance)
+                .preferredColorScheme(appearance.theme.scheme)
                 .onChange(of: phase, initial: true) { _, new in model.phase(new) }
         }
     }
@@ -23,6 +26,7 @@ struct Home: View {
     private enum HomeTab: Hashable { case live, all, activities, account }
 
     @State private var tab: HomeTab = .live
+    @State private var classroomPath: [ClassroomRoute] = []
     @State private var showingJoin = false
     @State private var pendingJoin: String?
     @State private var classroomSearch = ""
@@ -31,8 +35,11 @@ struct Home: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            NavigationStack {
+            NavigationStack(path: $classroomPath) {
                 liveClassrooms
+                    .navigationDestination(for: ClassroomRoute.self) { route in
+                        ClassroomDetailView(model: model, route: route)
+                    }
                     .navigationTitle("正在上课")
                     .toolbar {
                         requestToolbar
@@ -56,11 +63,18 @@ struct Home: View {
             .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
             .tag(HomeTab.activities)
             NavigationStack {
-                settings.navigationTitle("账号").toolbar { requestToolbar }
+                settings.navigationTitle("我的").toolbar { requestToolbar }
             }
-            .tabItem { Label("账号", systemImage: "person.crop.circle") }
+            .tabItem { Label("我的", systemImage: "person.crop.circle") }
             .tag(HomeTab.account)
         }
+        .onChange(of: model.classroomEntry) { _, _ in
+            guard let lesson = model.lesson else { return }
+            let row = model.live.first { $0.field("lessonId") == lesson.id }
+            classroomPath = [ClassroomRoute(id: lesson.id, courseName: row.map(courseName) ?? "")]
+            tab = .live
+        }
+        .onChange(of: model.selected) { _, _ in classroomPath = [] }
         .sheet(isPresented: $showingJoin, onDismiss: {
             if let value = pendingJoin {
                 pendingJoin = nil
@@ -73,7 +87,10 @@ struct Home: View {
             }
         }
         .sheet(item: $model.deck) { deck in
-            if let api = model.api { DeckView(deck: deck, api: api) }
+            if let api = model.api {
+                if deck.live == nil { DeckView(deck: deck, api: api) }
+                else { LiveDeckReader(model: model, api: api, initialDeck: deck) }
+            }
         }
         .alert("雨课堂", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("好") { model.error = nil }
@@ -97,55 +114,39 @@ struct Home: View {
         }
     }
 
+    private func courseName(_ row: JSON) -> String {
+        let course = model.courses.first { $0.field("course_id") == row.field("courseId") }
+        return course?.field("course_name").nonempty ?? row.field("courseName")
+    }
+
     private var liveClassrooms: some View {
         List {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
+            } else if model.live.isEmpty && !model.busy {
+                ContentUnavailableView("暂无正在上课的课程", systemImage: "play.circle")
             } else {
-                Section("正在上课") {
-                    if model.live.isEmpty { Text("暂无正在上课的课堂") }
-                    ForEach(model.live.indices, id: \.self) { index in
-                        let row = model.live[index]
-                        let metadata = model.courses.first { $0.field("course_id") == row.field("courseId") }
-                        Button {
-                            model.enter(row.field("lessonId"))
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(metadata?.field("course_name").nonempty ?? "课堂 " + row.field("lessonId"))
-                                Text(row.field("lessonId")).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .contextMenu {
-                            Button("复制课堂 ID") { UIPasteboard.general.string = row.field("lessonId") }
+                ForEach(model.live.indices, id: \.self) { index in
+                    let row = model.live[index]
+                    let lessonID = row.field("lessonId")
+                    Button {
+                        model.enter(lessonID)
+                    } label: {
+                        HStack {
+                            Text(courseName(row).nonempty ?? "课堂 " + lessonID)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                         }
                     }
-                }
-                if let lesson = model.lesson, !model.isLessonFinished {
-                    Section("正在放映的课件") {
-                        if let api = model.api, !model.presentation.isEmpty {
-                            LiveSlideView(api: api, lesson: lesson, presentation: model.presentation, page: model.livePage)
-                                .id(model.presentation)
-                        } else {
-                            Text("等待教师开始放映").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if let lesson = model.lesson {
-                    Section("当前课堂") {
-                        Text("课堂 " + lesson.id)
-                        Text(model.connection.isEmpty ? "课堂连接已暂停" : model.connection)
-                        if !model.presentation.isEmpty {
-                            Button("查看实时课件") {
-                                model.openDeck(id: model.presentation, title: "实时课件", historical: nil)
-                            }
-                        }
-                        NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
-                        Button("重新连接") { model.connect() }
-                        Button("离开课堂", role: .destructive) { model.leave() }
+                    .contextMenu {
+                        Button("复制课堂 ID") { UIPasteboard.general.string = lessonID }
                     }
                 }
             }
         }
+        .wallpaperSurface()
         .refreshable { model.run { try await model.loadCourses() } }
     }
 
@@ -176,6 +177,7 @@ struct Home: View {
                 }
             }
         }
+        .wallpaperSurface()
         .searchable(text: $classroomSearch, prompt: "搜索课程或班级")
         .onChange(of: model.selected) { _, _ in classroomSearch = "" }
         .refreshable { model.run { try await model.loadCourses() } }
@@ -216,6 +218,7 @@ struct Home: View {
                 }
             }
         }
+        .wallpaperSurface()
         .onChange(of: model.selected) { _, _ in course = ""; type = "" }
         .refreshable { model.run { try await model.loadFeed(reset: true) } }
     }
@@ -264,13 +267,18 @@ struct Home: View {
             }
             NavigationLink("AI 设置") { AISettingsView() }
             Section("已保存账号") {
-                ForEach(model.accounts.filter { $0.service == model.service }) { account in
+                ForEach(model.accounts) { account in
                     Button {
                         model.select(account)
                     } label: {
                         HStack {
                             Text(account.name.nonempty ?? account.userID)
                             Spacer()
+                            Text(account.service.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(.quaternary, in: Capsule())
                             if model.selected == account.id { Image(systemName: "checkmark") }
                         }
                     }
@@ -288,7 +296,9 @@ struct Home: View {
                 }
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
+            AppearanceSettings()
         }
+        .wallpaperSurface()
     }
 }
 
@@ -327,6 +337,7 @@ private struct JoinClassroomSheet: View {
                     .disabled(requestingCamera)
                 }
             }
+            .wallpaperSurface()
             .navigationTitle("加入课堂")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

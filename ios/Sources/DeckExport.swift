@@ -2,25 +2,45 @@ import UIKit
 import ZIPFoundation
 
 enum DeckExport {
-    static func create(_ deck: Deck, api: RainAPI, pptx: Bool,
-                       progress: @escaping @MainActor (Int) -> Void) async throws -> URL {
+    static func fileStem(_ name: String, fallback: String) -> String {
+        var base = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.lowercased().hasSuffix(".pptx") { base.removeLast(5) }
+        let prohibited = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "/\\:*?\"<>|"))
+        base = base.components(separatedBy: prohibited).joined(separator: "_")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". ").union(.whitespacesAndNewlines))
+        var stem = ""
+        var count = 0
+        for character in base {
+            let bytes = String(character).utf8.count
+            guard count + bytes <= 180 else { break }
+            stem.append(character)
+            count += bytes
+        }
+        return stem.isEmpty ? fallback : stem
+    }
+
+    static func create(_ deck: Deck, api: RainAPI, pptx: Bool, filename: String?,
+                       progress: @escaping @MainActor (Int?) -> Void) async throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let output = directory.appendingPathComponent(pptx ? "Slides.pptx" : "Slides.zip")
+        let defaultName = fileStem(deck.title, fallback: "Slides")
+        let name = pptx ? fileStem(filename ?? defaultName, fallback: defaultName) : "Slides"
+        let output = directory.appendingPathComponent(name).appendingPathExtension(pptx ? "pptx" : "zip")
         do {
             let archive = try Archive(url: output, accessMode: .create)
             var ratio = 1.0
             for (offset, url) in deck.slides.enumerated() {
                 try Task.checkCancellation()
+                let page = offset + 1
+                await progress(page)
                 let input = try await api.slideImage(url)
                 guard let image = UIImage(data: input), let data = image.jpegData(compressionQuality: 0.94),
                       image.size.height > 0 else { throw RainError.invalid("课件图片") }
                 if offset == 0 { ratio = Double(image.size.width / image.size.height) }
-                let page = offset + 1
                 try add(archive, pptx ? "ppt/media/image\(page).jpg" : String(format: "%04d.jpg", page), data)
-                await progress(page)
             }
-            if pptx { try writeParts(archive, count: deck.slides.count, title: deck.title, ratio: ratio) }
+            await progress(nil)
+            if pptx { try writeParts(archive, count: deck.slides.count, title: name, ratio: ratio) }
             try Task.checkCancellation()
             return output
         } catch {

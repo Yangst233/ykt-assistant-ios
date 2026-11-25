@@ -204,11 +204,29 @@ final class RainAPI {
         return Lesson(id: id, bearer: bearer, token: token, created: Date())
     }
 
-    func liveSlides(presentation: String, lesson: Lesson) async throws -> [JSON] {
+    enum ReportPart: String {
+        case info = "lesson-info"
+        case detail
+    }
+
+    func classroomReport(_ part: ReportPart, lessonID: String) async throws -> JSON {
+        guard Self.validLesson(lessonID) else { throw RainError.invalid("课堂 ID") }
+        let query = [URLQueryItem(name: "lesson_id", value: lessonID),
+                     URLQueryItem(name: "front_time", value: String(Int64(Date().timeIntervalSince1970 * 1000)))]
+        let data = try await request("/api/v3/classroom-report/student/" + part.rawValue, query: query).0.object("data")
+        guard data["lessonId"] == nil || data.field("lessonId") == lessonID else { throw RainError.invalid("课堂报告关联") }
+        return data
+    }
+
+    func liveDeck(presentation: String, lesson: Lesson, page: Int?) async throws -> Deck {
         let data = try await request("/api/v3/lesson/presentation/fetch",
             query: [.init(name: "presentation_id", value: presentation)], bearer: lesson.bearer).0.object("data")
         guard data["id"] == nil || data.field("id") == presentation else { throw RainError.invalid("课件关联") }
-        return try data.rows("slides")
+        let slides = try Deck.slideImages(data.rows("slides"))
+        guard !slides.isEmpty else { throw RainError.invalid("暂无可查看的课件页面") }
+        let title = data.field("title").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Deck(title: title.isEmpty ? "实时课件" : title, slides: slides,
+                    live: .init(lessonID: lesson.id, presentationID: presentation, initialPage: page))
     }
 
     func slideImage(_ candidates: [String]) async throws -> Data {
