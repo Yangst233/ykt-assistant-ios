@@ -204,6 +204,13 @@ final class RainAPI {
         return Lesson(id: id, bearer: bearer, token: token, created: Date())
     }
 
+    func liveSlides(presentation: String, lesson: Lesson) async throws -> [JSON] {
+        let data = try await request("/api/v3/lesson/presentation/fetch",
+            query: [.init(name: "presentation_id", value: presentation)], bearer: lesson.bearer).0.object("data")
+        guard data["id"] == nil || data.field("id") == presentation else { throw RainError.invalid("课件关联") }
+        return try data.rows("slides")
+    }
+
     func slideImage(_ candidates: [String]) async throws -> Data {
         var failure: Error = RainError.invalid("课件图片地址")
         for candidate in candidates {

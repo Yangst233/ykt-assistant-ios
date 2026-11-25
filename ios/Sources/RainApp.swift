@@ -20,38 +20,56 @@ struct RainApp: App {
 @MainActor
 struct Home: View {
     @ObservedObject var model: AppModel
-    @State private var input = ""
+    private enum HomeTab: Hashable { case live, all, activities, account }
+
+    @State private var tab: HomeTab = .live
+    @State private var showingJoin = false
+    @State private var pendingJoin: String?
     @State private var classroomSearch = ""
-    @State private var scan = false
     @State private var course = ""
     @State private var type = ""
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
+            NavigationStack {
+                liveClassrooms
+                    .navigationTitle("正在上课")
+                    .toolbar {
+                        requestToolbar
+                        if model.selected != nil {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("加入课堂", systemImage: "plus") { showingJoin = true }
+                            }
+                        }
+                    }
+            }
+            .tabItem { Label("正在上课", systemImage: "play.circle") }
+            .tag(HomeTab.live)
             NavigationStack {
                 allClassrooms.navigationTitle("所有课堂").toolbar { requestToolbar }
             }
             .tabItem { Label("所有课堂", systemImage: "books.vertical") }
-            NavigationStack {
-                liveClassrooms.navigationTitle("正在上课").toolbar { requestToolbar }
-            }
-            .tabItem { Label("正在上课", systemImage: "play.circle") }
+            .tag(HomeTab.all)
             NavigationStack {
                 activities.navigationTitle("动态").toolbar { requestToolbar }
             }
             .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
+            .tag(HomeTab.activities)
             NavigationStack {
                 settings.navigationTitle("账号").toolbar { requestToolbar }
             }
             .tabItem { Label("账号", systemImage: "person.crop.circle") }
+            .tag(HomeTab.account)
         }
-        .sheet(isPresented: $scan) {
-            Scanner { result in
-                scan = false
-                switch result {
-                case .success(let value): input = value; model.enter(value)
-                case .failure(let error): model.error = error.localizedDescription
-                }
+        .sheet(isPresented: $showingJoin, onDismiss: {
+            if let value = pendingJoin {
+                pendingJoin = nil
+                if model.selected != nil { model.enter(value) }
+            }
+        }) {
+            JoinClassroomSheet { value in
+                pendingJoin = value
+                showingJoin = false
             }
         }
         .sheet(item: $model.deck) { deck in
@@ -79,46 +97,11 @@ struct Home: View {
         }
     }
 
-    private func requestScanner() {
-        Task {
-            guard await AVCaptureDevice.requestAccess(for: .video), DataScannerViewController.isAvailable else {
-                model.error = "相机不可用，请检查相机权限或手动输入课堂 ID"
-                return
-            }
-            if model.selected != nil { scan = true }
-        }
-    }
-
     private var liveClassrooms: some View {
         List {
             if model.selected == nil {
                 ContentUnavailableView("请先登录", systemImage: "person.crop.circle.badge.exclamationmark")
             } else {
-                if let lesson = model.lesson {
-                    Section("当前课堂") {
-                        Text("课堂 " + lesson.id)
-                        Text(model.connection.isEmpty ? "课堂连接已暂停" : model.connection)
-                        if !model.livePage.isEmpty { Text("播放页：\(model.livePage)") }
-                        if !model.presentation.isEmpty {
-                            Button("查看实时课件") {
-                                model.openDeck(id: model.presentation, title: "实时课件", historical: nil)
-                            }
-                        }
-                        NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
-                        Button("重新连接") { model.connect() }
-                        Button("离开课堂", role: .destructive) { model.leave() }
-                    }
-                }
-                Section("入课") {
-                    TextField("课堂 ID 或课堂二维码链接", text: $input, axis: .vertical)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button("查看课堂") { model.enter(input) }.disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    if DataScannerViewController.isSupported {
-                        Button("扫描课堂二维码", systemImage: "qrcode.viewfinder") { requestScanner() }
-                    }
-                }
                 Section("正在上课") {
                     if model.live.isEmpty { Text("暂无正在上课的课堂") }
                     ForEach(model.live.indices, id: \.self) { index in
@@ -135,6 +118,30 @@ struct Home: View {
                         .contextMenu {
                             Button("复制课堂 ID") { UIPasteboard.general.string = row.field("lessonId") }
                         }
+                    }
+                }
+                if let lesson = model.lesson, !model.isLessonFinished {
+                    Section("正在放映的课件") {
+                        if let api = model.api, !model.presentation.isEmpty {
+                            LiveSlideView(api: api, lesson: lesson, presentation: model.presentation, page: model.livePage)
+                                .id(model.presentation)
+                        } else {
+                            Text("等待教师开始放映").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if let lesson = model.lesson {
+                    Section("当前课堂") {
+                        Text("课堂 " + lesson.id)
+                        Text(model.connection.isEmpty ? "课堂连接已暂停" : model.connection)
+                        if !model.presentation.isEmpty {
+                            Button("查看实时课件") {
+                                model.openDeck(id: model.presentation, title: "实时课件", historical: nil)
+                            }
+                        }
+                        NavigationLink("课堂题目") { ClassroomQuestionsView(model: model.quiz) }
+                        Button("重新连接") { model.connect() }
+                        Button("离开课堂", role: .destructive) { model.leave() }
                     }
                 }
             }
@@ -287,6 +294,65 @@ struct Home: View {
 
 private extension String {
     var nonempty: String? { isEmpty ? nil : self }
+}
+
+@MainActor
+private struct JoinClassroomSheet: View {
+    let onJoin: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var input = ""
+    @State private var scanning = false
+    @State private var error: String?
+    @State private var requestingCamera = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("课堂 ID 或课堂二维码链接", text: $input, axis: .vertical)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if DataScannerViewController.isSupported {
+                    Button("扫描课堂二维码", systemImage: "qrcode.viewfinder") {
+                        requestingCamera = true
+                        Task {
+                            defer { requestingCamera = false }
+                            if await AVCaptureDevice.requestAccess(for: .video), DataScannerViewController.isAvailable {
+                                scanning = true
+                            } else {
+                                error = "相机不可用，请检查相机权限或手动输入课堂 ID"
+                            }
+                        }
+                    }
+                    .disabled(requestingCamera)
+                }
+            }
+            .navigationTitle("加入课堂")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("查看课堂") { onJoin(input) }
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .navigationDestination(isPresented: $scanning) {
+                Scanner { result in
+                    switch result {
+                    case .success(let value): onJoin(value)
+                    case .failure(let failure):
+                        scanning = false
+                        error = failure.localizedDescription
+                    }
+                }
+                .navigationTitle("扫描课堂二维码")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .alert("加入课堂", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
+        }
+    }
 }
 
 struct Scanner: UIViewControllerRepresentable {

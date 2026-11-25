@@ -38,7 +38,7 @@ final class AppModel: ObservableObject {
     private var stream: Task<Void, Never>?
     private var socket: URLSessionWebSocketTask?
     private var foreground = true
-    private var lessonFinished = false
+    @Published private(set) var isLessonFinished = false
     private var loginBackgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var generation = UUID()
     private(set) var api: RainAPI?
@@ -260,7 +260,7 @@ final class AppModel: ObservableObject {
         disconnect()
         self.lesson = lesson
         quiz.bind(api: api, lesson: lesson)
-        lessonFinished = false
+        isLessonFinished = false
         presentation = ""
         livePage = ""
         connect()
@@ -314,7 +314,7 @@ final class AppModel: ObservableObject {
     }
 
     func connect() {
-        guard foreground, !lessonFinished, socket == nil, let api, let lesson,
+        guard foreground, !isLessonFinished, socket == nil, let api, let lesson,
               let url = URL(string: "wss://\(api.service.host)/wsapp/") else { return }
         let ws = api.session.webSocketTask(with: api.headers(url))
         socket = ws
@@ -349,15 +349,20 @@ final class AppModel: ObservableObject {
                     let timeline = event["timeline"] as? [JSON]
                     let recent = timeline?.last { $0.field("type") == "slide" && !$0.field("pres").isEmpty }
                     let id = event.field("presentation")
-                    if let recent, id.isEmpty || event.field("op") == "hello" {
-                        presentation = recent.field("pres")
+                    let newPresentation = (id.isEmpty || event.field("op") == "hello")
+                        ? (recent?.field("pres") ?? id) : id
+                    if !newPresentation.isEmpty && presentation != newPresentation {
+                        presentation = newPresentation
+                        livePage = ""
+                    }
+                    if let recent, id.isEmpty || event.field("op") == "hello", !recent.field("si").isEmpty {
                         livePage = recent.field("si")
-                    } else if !id.isEmpty { presentation = id }
+                    }
                     if !event.field("slideindex").isEmpty { livePage = event.field("slideindex") }
                     if let slide = event["slide"] as? JSON, !slide.field("si").isEmpty { livePage = slide.field("si") }
                     quiz.ingest(event, presentation: presentation)
                     if quiz.finished {
-                        lessonFinished = true
+                        isLessonFinished = true
                         connection = "课堂已结束"
                         return
                     }
@@ -444,10 +449,7 @@ final class AppModel: ObservableObject {
             } else {
                 guard let lesson = self.lesson else { throw RainError.invalid("课堂凭证") }
                 do {
-                    let data = try await api.request("/api/v3/lesson/presentation/fetch",
-                        query: [.init(name: "presentation_id", value: id)], bearer: lesson.bearer).0.object("data")
-                    if data["id"] != nil && data.field("id") != id { throw RainError.invalid("课件关联") }
-                    rows = try data.rows("slides")
+                    rows = try await api.liveSlides(presentation: id, lesson: lesson)
                 } catch RainError.http(let code) where code == 401 || code == 403 {
                     try Task.checkCancellation()
                     self.invalidateCredentials(lesson.id)
