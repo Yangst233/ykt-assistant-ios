@@ -93,8 +93,8 @@ struct Home: View {
         .task(id: model.api.map(ObjectIdentifier.init)) {
             await model.refreshFeed(reset: true)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.deck == nil { FloatingExportView(export: exports) }
+        .overlay {
+            if model.deck == nil { FloatingExportView(export: exports).padding(.bottom, 62) }
         }
         .sheet(isPresented: $showingJoin, onDismiss: {
             if let value = pendingJoin {
@@ -303,19 +303,40 @@ struct Home: View {
                 }
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
-            AppearanceSettings()
-            Section("课件") {
-                Toggle("缓存 PPT", isOn: $appearance.cachePPT)
-                if appearance.cachePPT {
-                    SettingsPickerRow("预加载 PPT", value: appearance.pptPreload.title, selection: $appearance.pptPreload) {
-                        ForEach(PPTPreload.allCases) { option in Text(option.title).tag(option) }
-                    }
-                    .ownsGlassRowLayout()
+            Section("设置") {
+                NavigationLink {
+                    MaterialForm { AppearanceSettings() }
+                        .wallpaperSurface()
+                        .navigationTitle("外观")
+                } label: {
+                    NavigationRowLabel { Label("外观", systemImage: "circle.lefthalf.filled") }
                 }
+                .glassNavigationInteraction()
+                NavigationLink {
+                    pptSettings
+                } label: {
+                    NavigationRowLabel { Label("PPT", systemImage: "slides") }
+                }
+                .glassNavigationInteraction()
             }
         }
         .wallpaperSurface()
     }
+
+    private var pptSettings: some View {
+        MaterialForm {
+            Toggle("缓存 PPT", isOn: $appearance.cachePPT)
+            if appearance.cachePPT {
+                SettingsPickerRow("预加载 PPT", value: appearance.pptPreload.title, selection: $appearance.pptPreload) {
+                    ForEach(PPTPreload.allCases) { option in Text(option.title).tag(option) }
+                }
+                .ownsGlassRowLayout()
+            }
+        }
+        .wallpaperSurface()
+        .navigationTitle("PPT")
+    }
+
 }
 
 private extension String {

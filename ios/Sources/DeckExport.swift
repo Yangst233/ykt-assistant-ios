@@ -19,12 +19,17 @@ enum DeckExport {
         return stem.isEmpty ? fallback : stem
     }
 
+    static func exportStem(title: String, pptx: Bool, filename: String?) -> String {
+        guard pptx else { return "Slides" }
+        let defaultName = fileStem(title, fallback: "Slides")
+        return fileStem(filename ?? defaultName, fallback: defaultName)
+    }
+
     static func create(_ deck: Deck, api: RainAPI, pptx: Bool, filename: String?,
                        progress: @escaping @MainActor (Int?) -> Void) async throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let defaultName = fileStem(deck.title, fallback: "Slides")
-        let name = pptx ? fileStem(filename ?? defaultName, fallback: defaultName) : "Slides"
+        let name = exportStem(title: deck.title, pptx: pptx, filename: filename)
         let output = directory.appendingPathComponent(name).appendingPathExtension(pptx ? "pptx" : "zip")
         do {
             let archive = try Archive(url: output, accessMode: .create)
