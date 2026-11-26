@@ -11,6 +11,7 @@ struct DeckView: View {
     var followError: String? = nil
     var retryFollow: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @ScaledMetric(relativeTo: .footnote) private var cornerControlClearance = 128.0
     @EnvironmentObject private var appearance: AppAppearance
     @StateObject private var preloadStore = PPTPreloadStore()
     @State private var index = 0
@@ -35,10 +36,7 @@ struct DeckView: View {
                     } else {
                         slideViewport
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if let followTeacher {
-                            Toggle("跟随老师", isOn: followTeacher).padding(.horizontal)
-                        }
-                        pageControls
+                        portraitControls
                     }
                     if followTeacher != nil, let followError {
                         Text(followError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
@@ -226,6 +224,26 @@ struct DeckView: View {
     }
 
     private var landscapeViewport: some View {
+        GeometryReader { bounds in
+            let availableWidth = max(0, bounds.size.width - 112)
+            let slideWidth = image.map { slide in
+                min(availableWidth, bounds.size.height * slide.size.width / max(1, slide.size.height))
+            } ?? 0
+            let roomAtEachSide = (bounds.size.width - slideWidth) / 2
+            let canOverlayCorners = zoom == 1 && roomAtEachSide >= cornerControlClearance
+            if canOverlayCorners {
+                landscapeSlide
+                    .overlay(alignment: .bottom) { cornerControls }
+            } else {
+                VStack(spacing: 0) {
+                    landscapeSlide
+                    cornerControls
+                }
+            }
+        }
+    }
+
+    private var landscapeSlide: some View {
         slideViewport
             .padding(.horizontal, 56)
             .overlay(alignment: .leading) {
@@ -236,21 +254,41 @@ struct DeckView: View {
                 landscapePageButton("下一页", icon: "chevron.right", offset: 1)
                     .padding(.trailing, 8)
             }
-            .overlay(alignment: .bottomLeading) {
-                pageCount.padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(8)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if let followTeacher {
-                    Toggle("跟随老师", isOn: followTeacher)
-                        .fixedSize()
-                        .controlSize(.small)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-                        .padding(8)
+    }
+
+    @ViewBuilder private var cornerControls: some View {
+        if let followTeacher {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    pageBadge
+                    Spacer(minLength: 0)
+                    FollowTeacherButton(isFollowing: followTeacher)
+                }
+                VStack(spacing: 4) {
+                    pageBadge.frame(maxWidth: .infinity, alignment: .leading)
+                    FollowTeacherButton(isFollowing: followTeacher)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
+        } else {
+            pageBadge
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        }
+    }
+
+    @ViewBuilder private var pageBadge: some View {
+        let badge = pageCount
+            .padding(.horizontal, 10)
+            .frame(minHeight: 44)
+            .fixedSize(horizontal: true, vertical: false)
+        if #available(iOS 26.0, *) {
+            badge.glassEffect(.regular, in: .capsule)
+        } else {
+            badge.background(.regularMaterial, in: Capsule())
+        }
     }
 
     @ViewBuilder private func landscapePageButton(_ title: String, icon: String, offset: Int) -> some View {
@@ -263,26 +301,19 @@ struct DeckView: View {
         }
     }
 
-    @ViewBuilder private var pageControls: some View {
-        if #available(iOS 26.0, *) {
-            GlassEffectContainer(spacing: 16) {
-                HStack(spacing: 12) {
-                    pageButton("上一页", icon: "chevron.left", offset: -1)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                    pageCount
-                    pageButton("下一页", icon: "chevron.right", offset: 1)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                }
+    private var portraitControls: some View {
+        VStack(spacing: 6) {
+            if let followTeacher {
+                FollowTeacherButton(isFollowing: followTeacher)
             }
-            .padding()
-        } else {
             HStack(spacing: 12) {
-                pageButton("上一页", icon: "chevron.left", offset: -1)
+                landscapePageButton("上一页", icon: "chevron.left", offset: -1)
                 pageCount
-                pageButton("下一页", icon: "chevron.right", offset: 1)
+                landscapePageButton("下一页", icon: "chevron.right", offset: 1)
             }
-            .padding()
         }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     private var pageCount: some View {
@@ -326,6 +357,51 @@ struct DeckView: View {
     }
 }
 
+
+private struct FollowTeacherButton: View {
+    @Binding var isFollowing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let button = Button {
+            isFollowing.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isFollowing ? "checkmark.circle.fill" : "hand.draw")
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                ZStack(alignment: .leading) {
+                    Text("跟随老师").hidden().accessibilityHidden(true)
+                    Text("自由浏览").hidden().accessibilityHidden(true)
+                    Text(isFollowing ? "跟随老师" : "自由浏览")
+                        .contentTransition(.opacity)
+                }
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Capsule())
+        }
+        .buttonBorderShape(.capsule)
+        .fixedSize()
+        .accessibilityLabel("跟随老师")
+        .accessibilityValue(isFollowing ? "已开启" : "自由浏览")
+        .accessibilityAddTraits(isFollowing ? .isSelected : [])
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: isFollowing)
+
+        let tint: Color? = isFollowing ? .blue.opacity(0.28) : nil
+        if #available(iOS 26.1, *) {
+            button.buttonStyle(GlassButtonStyle(.regular.tint(tint)))
+        } else if #available(iOS 26.0, *) {
+            button
+                .buttonStyle(.plain)
+                .glassEffect(.regular.tint(tint).interactive(), in: .capsule)
+        } else {
+            button.buttonStyle(.bordered).tint(isFollowing ? .blue : nil)
+        }
+    }
+}
 
 struct FrostedReaderBackground: View {
     @EnvironmentObject private var appearance: AppAppearance
