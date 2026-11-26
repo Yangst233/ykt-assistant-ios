@@ -134,7 +134,8 @@ extension View {
                         .font(.largeTitle.bold())
                         .appTextStyle(.largeTitle, fallback: .primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.65)
+                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                        .fixedSize(horizontal: true, vertical: false)
                         .accessibilityAddTraits(.isHeader)
                 }
                 if #available(iOS 26.0, *) {

@@ -148,12 +148,11 @@ struct Home: View {
     }
 
     @ToolbarContentBuilder private var courseRefreshToolbar: some ToolbarContent {
-        if model.selected != nil {
+        if model.selected != nil && !model.busy {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("刷新课程", systemImage: "arrow.clockwise") {
                     model.run { try await model.loadCourses() }
                 }
-                .disabled(model.busy)
             }
         }
     }
@@ -190,10 +189,11 @@ struct Home: View {
     @ToolbarContentBuilder private var requestToolbar: some ToolbarContent {
         if model.busy {
             ToolbarItem(placement: .topBarTrailing) {
-                ProgressView().accessibilityLabel("正在加载")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("取消") { model.cancel(); model.qr = nil }
+                Button("取消加载", systemImage: "xmark") {
+                    model.cancel()
+                    model.qr = nil
+                }
+                .accessibilityHint("正在加载，点按取消")
             }
         }
     }
