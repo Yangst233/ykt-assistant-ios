@@ -31,7 +31,7 @@ struct ClassroomDetailView: View {
         MaterialList {
             if let lesson = model.lesson, lesson.id == route.id, let api = model.api {
                 if !model.isLessonFinished {
-                    Section("正在放映的课件") {
+                    AppSection("正在放映的课件") {
                         if model.presentation.isEmpty {
                             Text("等待教师开始放映").foregroundStyle(.secondary)
                         } else {
@@ -44,9 +44,9 @@ struct ClassroomDetailView: View {
                         }
                     }
                 }
-                Section("当前课堂") {
+                AppSection("当前课堂") {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(classroomName).font(.headline)
+                        Text(classroomName).font(.headline).appTextStyle(.contentTitle)
                         Spacer(minLength: 8)
                         Text(connectionLabel)
                             .font(.caption.weight(.medium))
@@ -56,7 +56,7 @@ struct ClassroomDetailView: View {
                     }
                     .accessibilityElement(children: .combine)
                     if model.connection.hasPrefix("连接中断") {
-                        Text(model.connection).font(.footnote).foregroundStyle(.secondary)
+                        Text(model.connection).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
                     }
                     ClassroomMetadata(info: info, report: report, attendance: attendance,
                                       refresh: { refresh += 1 }, refreshDisabled: checking)
@@ -77,7 +77,7 @@ struct ClassroomDetailView: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle(title)
+        .appNavigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: AttendanceRequest(lessonID: model.lesson?.id, refresh: refresh)) {
             guard model.lesson?.id == route.id, let api = model.api else { return }

@@ -41,7 +41,7 @@ struct DeckView: View {
                         pageControls
                     }
                     if followTeacher != nil, let followError {
-                        Text(followError).font(.footnote).foregroundStyle(.secondary)
+                        Text(followError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
                         Button("重试同步") { retryFollow?() }
                     }
                     if exports.running {
@@ -51,13 +51,13 @@ struct DeckView: View {
                         ShareLink(item: file) { Label("分享导出文件", systemImage: "square.and.arrow.up") }
                     }
                     if let exportError = exports.error {
-                        Text(exportError).font(.footnote).foregroundStyle(.secondary)
+                        Text(exportError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { FrostedReaderBackground() }
-            .navigationTitle(deck.title)
+            .appNavigationTitle(deck.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
@@ -125,7 +125,7 @@ struct DeckView: View {
                     .scrollContentBackground(.hidden)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background { FrostedReaderBackground() }
-                    .navigationTitle("导出 PPTX")
+                    .appNavigationTitle("导出 PPTX")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("取消") { namingDeck = nil } }
@@ -289,6 +289,7 @@ struct DeckView: View {
         Text("\(index + 1) / \(deck.slides.count)")
             .font(.footnote.monospacedDigit())
             .foregroundStyle(.secondary)
+            .appTextStyle(.detail)
             .accessibilityLabel("第 \(index + 1) 页，共 \(deck.slides.count) 页")
     }
 

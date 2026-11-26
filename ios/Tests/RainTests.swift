@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import RainAssistant
 
 private final class MockHTTP: URLProtocol {
@@ -180,6 +181,24 @@ final class RainTests: XCTestCase {
         XCTAssertEqual(DeckExport.fileStem("讲义/第一讲", fallback: "Slides"), "讲义_第一讲")
         XCTAssertEqual(DeckExport.fileStem(" .pptx ", fallback: "文档"), "文档")
         XCTAssertLessThanOrEqual(DeckExport.fileStem(String(repeating: "讲", count: 200), fallback: "Slides").utf8.count, 180)
+    }
+
+    func testTextAppearanceKeepsLightAndDarkSettingsIndependent() throws {
+        let lightColor = try XCTUnwrap(StoredTextColor(color: .red, scheme: .light))
+        let darkColor = try XCTUnwrap(StoredTextColor(color: .blue, scheme: .dark))
+        var appearance = TextAppearance()
+        appearance[.light].colors[AppTextRole.largeTitle.rawValue] = lightColor
+        appearance[.light].largeShadow = TitleShadowStyle(enabled: true, color: lightColor)
+        appearance[.dark].colors[AppTextRole.largeTitle.rawValue] = darkColor
+        appearance[.dark].smallShadow = TitleShadowStyle(enabled: true, color: darkColor)
+
+        let data = try JSONEncoder().encode(appearance)
+        let restored = try JSONDecoder().decode(TextAppearance.self, from: data)
+        XCTAssertEqual(restored[.light], appearance[.light])
+        XCTAssertEqual(restored[.dark], appearance[.dark])
+        XCTAssertFalse(restored[.light].smallShadow.enabled)
+        XCTAssertFalse(restored[.dark].largeShadow.enabled)
+        XCTAssertNotEqual(restored[.light], restored[.dark])
     }
 
     func testCookieRoundTrip() throws {

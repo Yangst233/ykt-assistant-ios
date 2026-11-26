@@ -106,7 +106,7 @@ struct MaterialList<Rows: View>: View {
     init(@ViewBuilder content: () -> Rows) { rows = content() }
 
     var body: some View {
-        MaterialCollection(rows: rows, form: false)
+        MaterialCollection(rows: rows, form: false).appTextStyle(.body)
     }
 }
 
@@ -116,7 +116,7 @@ struct MaterialForm<Rows: View>: View {
     init(@ViewBuilder content: () -> Rows) { rows = content() }
 
     var body: some View {
-        MaterialCollection(rows: rows, form: true)
+        MaterialCollection(rows: rows, form: true).appTextStyle(.body)
     }
 }
 
@@ -162,6 +162,7 @@ private struct MaterialScroll<Rows: View>: View {
                                 VStack(alignment: .leading, spacing: 4) { section.footer }
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
+                                    .appTextStyle(.detail)
                                     .padding(.horizontal, 16)
                             }
                         }

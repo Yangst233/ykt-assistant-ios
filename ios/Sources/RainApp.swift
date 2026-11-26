@@ -45,7 +45,7 @@ struct Home: View {
                     .navigationDestination(for: ClassroomRoute.self) { route in
                         ClassroomDetailView(model: model, route: route)
                     }
-                    .navigationTitle("正在上课")
+                    .appNavigationTitle("正在上课")
                     .toolbar {
                         requestToolbar
                         if model.selected != nil {
@@ -58,13 +58,13 @@ struct Home: View {
             .tabItem { Label("正在上课", systemImage: "play.circle") }
             .tag(HomeTab.live)
             NavigationStack {
-                allClassrooms.navigationTitle("所有课堂").toolbar { requestToolbar }
+                allClassrooms.appNavigationTitle("所有课堂").toolbar { requestToolbar }
             }
             .tabItem { Label("所有课堂", systemImage: "books.vertical") }
             .tag(HomeTab.all)
             NavigationStack(path: $activityPath) {
                 activities
-                    .navigationTitle("动态")
+                    .appNavigationTitle("动态")
                     .toolbar { requestToolbar }
                     .navigationDestination(for: ActivityClassroomRoute.self) { route in
                         ActivityClassroomView(model: model, route: route)
@@ -73,7 +73,7 @@ struct Home: View {
             .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
             .tag(HomeTab.activities)
             NavigationStack {
-                settings.navigationTitle("我的").toolbar { requestToolbar }
+                settings.appNavigationTitle("我的").toolbar { requestToolbar }
             }
             .tabItem { Label("我的", systemImage: "person.crop.circle") }
             .tag(HomeTab.account)
@@ -189,8 +189,8 @@ struct Home: View {
                 ForEach(matches, id: \.self) { index in
                     let row = model.courses[index]
                     VStack(alignment: .leading) {
-                        Text(row.field("course_name").nonempty ?? row.field("course_id"))
-                        if let room = row.field("classroom_name").nonempty { Text(room).foregroundStyle(.secondary) }
+                        Text(row.field("course_name").nonempty ?? row.field("course_id")).appTextStyle(.contentTitle)
+                        if let room = row.field("classroom_name").nonempty { Text(room).foregroundStyle(.secondary).appTextStyle(.secondary) }
                     }
                 }
             }
@@ -252,11 +252,11 @@ struct Home: View {
     private func activityLabel(_ row: JSON) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(row.field("coursewareTitle").nonempty ?? row.field("courseName"))
-                .font(.body).foregroundStyle(.primary)
-            Text(row.field("courseName")).font(.subheadline).foregroundStyle(.secondary)
+                .font(.body).foregroundStyle(.primary).appTextStyle(.contentTitle)
+            Text(row.field("courseName")).font(.subheadline).foregroundStyle(.secondary).appTextStyle(.secondary)
             if let ms = Double(row.field("createTime")) {
                 Text(Date(timeIntervalSince1970: ms / 1000), format: .dateTime)
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
             }
         }
         .lineSpacing(3)
@@ -270,17 +270,18 @@ struct Home: View {
             .ownsGlassRowLayout()
             NavigationLink { AISettingsView() } label: { NavigationRowLabel { Text("AI 设置") } }
                 .glassNavigationInteraction()
-            Section("已保存账号") {
+            AppSection("已保存账号") {
                 ForEach(model.accounts) { account in
                     Button {
                         model.select(account)
                     } label: {
                         HStack {
-                            Text(account.name.nonempty ?? account.userID)
+                            Text(account.name.nonempty ?? account.userID).appTextStyle(.contentTitle)
                             Spacer()
                             Text(account.service.title)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .appTextStyle(.detail)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.quaternary, in: Capsule())
                             if model.selected == account.id { Image(systemName: "checkmark") }
@@ -303,11 +304,11 @@ struct Home: View {
                 }
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
-            Section("设置") {
+            AppSection("设置") {
                 NavigationLink {
                     MaterialForm { AppearanceSettings() }
                         .wallpaperSurface()
-                        .navigationTitle("外观")
+                        .appNavigationTitle("外观")
                 } label: {
                     NavigationRowLabel { Label("外观", systemImage: "circle.lefthalf.filled") }
                 }
@@ -334,7 +335,7 @@ struct Home: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle("PPT")
+        .appNavigationTitle("PPT")
     }
 
 }
@@ -363,7 +364,7 @@ private struct JoinClassroomSheet: View {
                     Button("确认进入课堂") { onJoin(input) }
                         .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } header: {
-                    Text("使用 ID 进入课堂")
+                    Text("使用 ID 进入课堂").appTextStyle(.smallTitle)
                 } footer: {
                     Text("输入课堂 ID，也可以粘贴课堂二维码链接。")
                 }
@@ -385,7 +386,7 @@ private struct JoinClassroomSheet: View {
                         Text("此设备不支持扫码").foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("扫码进入课堂")
+                    Text("扫码进入课堂").appTextStyle(.smallTitle)
                 } footer: {
                     Text("用相机扫描老师展示的课堂二维码。")
                 }
@@ -393,7 +394,7 @@ private struct JoinClassroomSheet: View {
             .scrollContentBackground(.hidden)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { FrostedReaderBackground() }
-            .navigationTitle("加入课堂")
+            .appNavigationTitle("加入课堂")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -407,7 +408,7 @@ private struct JoinClassroomSheet: View {
                         error = failure.localizedDescription
                     }
                 }
-                .navigationTitle("扫描课堂二维码")
+                .appNavigationTitle("扫描课堂二维码")
                 .navigationBarTitleDisplayMode(.inline)
             }
             .alert("加入课堂", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {

@@ -38,6 +38,13 @@ enum PPTPreload: Int, CaseIterable, Identifiable {
 
 @MainActor
 final class AppAppearance: ObservableObject {
+    @Published var textAppearance = TextAppearance.stored() {
+        didSet {
+            if let data = try? JSONEncoder().encode(textAppearance) {
+                UserDefaults.standard.set(data, forKey: "appTextAppearance")
+            }
+        }
+    }
     @Published var theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "appTheme") ?? "") ?? .system {
         didSet { UserDefaults.standard.set(theme.rawValue, forKey: "appTheme") }
     }
@@ -171,13 +178,19 @@ struct AppearanceSettings: View {
     @State private var loading = false
 
     var body: some View {
-        Section("外观") {
+        AppSection("外观") {
             SettingsPickerRow("主题", value: appearance.theme.title, selection: $appearance.theme) {
                 ForEach(AppTheme.allCases) { theme in
                     Text(theme.title).tag(theme)
                 }
             }
             .ownsGlassRowLayout()
+            NavigationLink {
+                TextAppearanceSettings()
+            } label: {
+                NavigationRowLabel { Label("文字与标题", systemImage: "textformat") }
+            }
+            .glassNavigationInteraction()
             SettingsPickerRow("容器材质", value: appearance.containerMaterial.title, selection: $appearance.containerMaterial) {
                 ForEach(ContainerMaterial.allCases) { material in
                     Text(material.title).tag(material)

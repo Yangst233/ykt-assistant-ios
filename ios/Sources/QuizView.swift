@@ -19,7 +19,7 @@ struct ClassroomQuestionsView: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle("课堂题目")
+        .appNavigationTitle("课堂题目")
     }
 }
 
@@ -45,7 +45,7 @@ struct QuestionView: View {
                         if !text.isEmpty { Text(text).textSelection(.enabled) }
                         if !q.imageURLs.isEmpty { QuestionImage(model: model, q: q) }
                     }
-                    Section("答案") { answer(q) }
+                    AppSection("答案") { answer(q) }
                         .disabled(q.sending || q.submitted)
                     if (1...6).contains(q.type), !q.submitted {
                         Section {
@@ -63,7 +63,7 @@ struct QuestionView: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle("课堂题目")
+        .appNavigationTitle("课堂题目")
         .onChange(of: model.question(id)?.round, initial: true) { _, _ in
             if model.question(id)?.specification == nil { model.load(id) }
         }
@@ -136,7 +136,7 @@ struct QuestionView: View {
     }
 
     private func aiSection(_ q: ClassroomQuestion) -> some View {
-        Section("AI 分析") {
+        AppSection("AI 分析") {
             if !q.imageURLs.isEmpty { Toggle("附带题目课件截图", isOn: $useImage).disabled(model.aiBusy) }
             if model.aiBusy {
                 ProgressView()
@@ -200,7 +200,7 @@ struct AISettingsView: View {
 
     var body: some View {
         MaterialForm {
-            Section("服务配置") {
+            AppSection("服务配置") {
                 TextField("HTTPS 接口地址", text: $configuration.address).keyboardType(.URL)
                 TextField("模型名称", text: $configuration.model)
                 SecureField("API Key", text: $configuration.key)
@@ -212,7 +212,7 @@ struct AISettingsView: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle("AI 设置")
+        .appNavigationTitle("AI 设置")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {

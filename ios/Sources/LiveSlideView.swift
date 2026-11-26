@@ -29,11 +29,11 @@ struct LiveSlideView: View {
                                 .frame(maxWidth: .infinity, minHeight: 110)
                         }
                         HStack {
-                            Text(deck.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                            Text(deck.title).font(.subheadline.weight(.medium)).appTextStyle(.contentTitle).lineLimit(2)
                             Spacer()
                             Text("查看实时课件")
                                 .font(.caption)
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(.tint).appTextStyle(.action)
                         }
                         .padding(.horizontal, 14).padding(.vertical, 12)
                     }
@@ -93,7 +93,7 @@ private struct LiveSlideImage: View {
                 }
                 .clipped()
             Text("第 \(page) 页")
-                .font(.subheadline.monospacedDigit())
+                .font(.subheadline.monospacedDigit()).appTextStyle(.detail)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
         }

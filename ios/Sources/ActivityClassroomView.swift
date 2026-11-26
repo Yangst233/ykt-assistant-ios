@@ -17,10 +17,10 @@ struct ActivityClassroomView: View {
 
     var body: some View {
         MaterialList {
-            Section("课堂信息") {
+            AppSection("课堂信息") {
                 ClassroomMetadata(info: info, report: report, attendance: attendance)
-                if let infoError { Text(infoError).font(.footnote).foregroundStyle(.secondary) }
-                if let reportError { Text(reportError).font(.footnote).foregroundStyle(.secondary) }
+                if let infoError { Text(infoError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail) }
+                if let reportError { Text(reportError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail) }
                 if infoError != nil || reportError != nil {
                     Button("重试") { retry += 1 }
                 }
@@ -30,7 +30,7 @@ struct ActivityClassroomView: View {
             }
         }
         .wallpaperSurface()
-        .navigationTitle(title)
+        .appNavigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: retry) {
             guard let api = model.api else { return }
@@ -77,7 +77,7 @@ struct ClassroomMetadata: View {
         LabeledContent("授课教师", value: teacher.isEmpty ? "暂无信息" : teacher)
         LabeledContent("签到状态") {
             HStack(spacing: 12) {
-                Text(attendance)
+                Text(attendance).appTextStyle(.secondary)
                 if let refresh {
                     Button("刷新", action: refresh).buttonStyle(.borderless).disabled(refreshDisabled)
                 }
@@ -85,7 +85,7 @@ struct ClassroomMetadata: View {
         }
         LabeledContent("上课时间") {
             if let start = Self.date(info?.field("start")) {
-                Text(start, format: .dateTime)
+                Text(start, format: .dateTime).appTextStyle(.detail)
             } else {
                 Text("暂无信息")
             }
@@ -118,7 +118,7 @@ struct ClassroomPPTList: View {
     let open: (String, String) -> Void
 
     var body: some View {
-        Section("PPT列表") {
+        AppSection("PPT列表") {
             if let report {
                 let decks = (report["presentation"] as? [JSON] ?? []).filter { !$0.field("presentationId").isEmpty }
                 if decks.isEmpty {
