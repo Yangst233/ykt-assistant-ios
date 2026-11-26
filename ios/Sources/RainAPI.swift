@@ -157,10 +157,11 @@ final class RainAPI {
         return (json, response)
     }
 
-    func profile() async throws -> JSON {
+    func profile(expectedUserID: String? = nil) async throws -> JSON {
         let profile = try await request("/v/course_meta/user_info").0.object("data").object("user_profile")
-        userID = profile.field("user_id")
-        guard !userID.isEmpty else { throw RainError.invalid("user_id") }
+        let id = profile.field("user_id")
+        guard !id.isEmpty, expectedUserID == nil || expectedUserID == id else { throw RainError.invalid("user_id") }
+        userID = id
         return profile
     }
 
@@ -238,22 +239,30 @@ final class RainAPI {
         throw failure
     }
 
-    func image(_ raw: String, qr: Bool = false) async throws -> Data {
-        if qr, raw.hasPrefix("data:image/"), raw.utf8.count <= 3 * 1024 * 1024,
+    enum ImagePurpose: Equatable {
+        case slide, qr, avatar
+    }
+
+    func image(_ raw: String, purpose: ImagePurpose = .slide) async throws -> Data {
+        if purpose == .qr, raw.hasPrefix("data:image/"), raw.utf8.count <= 3 * 1024 * 1024,
            let comma = raw.firstIndex(of: ","), raw[..<comma].hasSuffix(";base64"),
            let data = Data(base64Encoded: String(raw[raw.index(after: comma)...])) { return data }
-        let domains = ["yuketang.cn", "xuetangx.com", "qiniucdn.com", "clouddn.com", "qbox.me"]
-            + (qr ? ["weixin.qq.com", "wx.qq.com"] : [])
-        var target = URL(string: raw, relativeTo: URL(string: "https://" + service.host))
+        var domains = ["yuketang.cn", "xuetangx.com", "qiniucdn.com", "clouddn.com", "qbox.me"]
+        if purpose == .qr { domains += ["weixin.qq.com", "wx.qq.com"] }
+        if purpose == .avatar { domains += ["qlogo.cn", "qpic.cn", "weixin.qq.com", "wx.qq.com"] }
+        let address = purpose == .avatar && raw.hasPrefix("http://") ? "https://" + String(raw.dropFirst(7)) : raw
+        let maximumSize = purpose == .avatar ? 2 * 1024 * 1024 : 24 * 1024 * 1024
+        var target = URL(string: address, relativeTo: URL(string: "https://" + service.host))
         for _ in 0..<4 {
             guard let url = target?.absoluteURL, url.scheme == "https", url.user == nil, url.password == nil,
                   url.port == nil || url.port == 443, let host = url.host,
                   domains.contains(where: { host == $0 || host.hasSuffix("." + $0) }) else {
                 throw RainError.invalid("图片地址")
             }
-            var request = headers(url)
+            var request = headers(url, authenticated: purpose != .avatar)
             request.setValue("image/*", forHTTPHeaderField: "Accept")
-            if qr {
+            if purpose == .avatar { request.timeoutInterval = 8 }
+            if purpose == .qr {
                 request.cachePolicy = .reloadIgnoringLocalCacheData
                 request.timeoutInterval = 8
             }
@@ -267,7 +276,7 @@ final class RainAPI {
             guard response.mimeType?.hasPrefix("image/") == true else { throw RainError.invalid("图片类型") }
             var data = Data()
             for try await byte in bytes {
-                guard data.count < 24 * 1024 * 1024 else { throw RainError.invalid("图片超过大小限制") }
+                guard data.count < maximumSize else { throw RainError.invalid("图片超过大小限制") }
                 data.append(byte)
             }
             return data

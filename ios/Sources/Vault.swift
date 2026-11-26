@@ -7,6 +7,7 @@ struct Account: Codable, Identifiable {
     let name: String
     var cookieProperties: Data
     var lessons: [String: Lesson] = [:]
+    var avatarURLs: [String]? = nil
     var id: String { service.rawValue + ":" + userID }
 
     static func forLaunch(_ accounts: [Account], service: Service?, selectedID: String?) -> Account? {

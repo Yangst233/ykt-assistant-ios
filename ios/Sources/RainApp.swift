@@ -45,7 +45,7 @@ struct Home: View {
                     .navigationDestination(for: ClassroomRoute.self) { route in
                         ClassroomDetailView(model: model, route: route)
                     }
-                    .appNavigationTitle("正在上课")
+                    .appRootNavigationTitle("正在上课")
                     .toolbar {
                         requestToolbar
                         if model.selected != nil {
@@ -53,19 +53,36 @@ struct Home: View {
                                 Button("加入课堂", systemImage: "plus") { showingJoin = true }
                             }
                         }
+                        courseRefreshToolbar
+                        accountAvatarToolbar
                     }
             }
             .tabItem { Label("正在上课", systemImage: "play.circle") }
             .tag(HomeTab.live)
             NavigationStack {
-                allClassrooms.appNavigationTitle("所有课堂").toolbar { requestToolbar }
+                allClassrooms.appRootNavigationTitle("所有课堂").toolbar {
+                    requestToolbar
+                    courseRefreshToolbar
+                    accountAvatarToolbar
+                }
             }
             .tabItem { Label("所有课堂", systemImage: "books.vertical") }
             .tag(HomeTab.all)
             NavigationStack(path: $activityPath) {
                 activities
-                    .appNavigationTitle("动态")
-                    .toolbar { requestToolbar }
+                    .appRootNavigationTitle("动态")
+                    .toolbar {
+                        requestToolbar
+                        if model.selected != nil {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("刷新动态", systemImage: "arrow.clockwise") {
+                                    Task { await model.refreshFeed(reset: true) }
+                                }
+                                .disabled(model.loadingFeed)
+                            }
+                        }
+                        accountAvatarToolbar
+                    }
                     .navigationDestination(for: ActivityClassroomRoute.self) { route in
                         ActivityClassroomView(model: model, route: route)
                     }
@@ -73,7 +90,10 @@ struct Home: View {
             .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
             .tag(HomeTab.activities)
             NavigationStack {
-                settings.appNavigationTitle("我的").toolbar { requestToolbar }
+                settings.appRootNavigationTitle("我的").toolbar {
+                    requestToolbar
+                    accountAvatarToolbar
+                }
             }
             .tabItem { Label("我的", systemImage: "person.crop.circle") }
             .tag(HomeTab.account)
@@ -92,6 +112,9 @@ struct Home: View {
         }
         .task(id: model.api.map(ObjectIdentifier.init)) {
             await model.refreshFeed(reset: true)
+        }
+        .task(id: model.api.map(ObjectIdentifier.init)) {
+            await model.loadAccountAvatar()
         }
         .overlay {
             if model.deck == nil { FloatingExportView(export: exports).padding(.bottom, 62) }
@@ -122,6 +145,46 @@ struct Home: View {
                 Button("签到并进入课堂") { model.confirm(id) }
                 Button("取消", role: .cancel) { model.pendingLesson = nil }
             }
+    }
+
+    @ToolbarContentBuilder private var courseRefreshToolbar: some ToolbarContent {
+        if model.selected != nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("刷新课程", systemImage: "arrow.clockwise") {
+                    model.run { try await model.loadCourses() }
+                }
+                .disabled(model.busy)
+            }
+        }
+    }
+
+    @ToolbarContentBuilder private var accountAvatarToolbar: some ToolbarContent {
+        let item = ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                tab = .account
+            } label: {
+                Group {
+                    if let avatar = model.accountAvatar {
+                        Image(uiImage: avatar).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: "person.crop.circle.fill")
+                            .resizable().scaledToFit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 34, height: 34)
+                .clipShape(Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("我的账号")
+        }
+        if #available(iOS 26.0, *) {
+            item.sharedBackgroundVisibility(.hidden)
+        } else {
+            item
+        }
     }
 
     @ToolbarContentBuilder private var requestToolbar: some ToolbarContent {

@@ -183,6 +183,13 @@ final class RainTests: XCTestCase {
         XCTAssertLessThanOrEqual(DeckExport.fileStem(String(repeating: "讲", count: 200), fallback: "Slides").utf8.count, 180)
     }
 
+    func testStoredAccountWithoutAvatarStillDecodes() throws {
+        let previousAccount = #"{"service":"www","userID":"42","name":"Student","cookieProperties":"","lessons":{}}"#
+        let decoded = try JSONDecoder().decode(Account.self, from: Data(previousAccount.utf8))
+        XCTAssertEqual(decoded.userID, "42")
+        XCTAssertNil(decoded.avatarURLs)
+    }
+
     func testTextAppearanceKeepsLightAndDarkSettingsIndependent() throws {
         let lightColor = try XCTUnwrap(StoredTextColor(color: .red, scheme: .light))
         let darkColor = try XCTUnwrap(StoredTextColor(color: .blue, scheme: .dark))

@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
+import ImageIO
 
 struct Deck: Identifiable {
     let id = UUID()
@@ -28,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var service = Service.standard
     @Published var accounts: [Account] = []
     @Published var selected: String?
+    @Published private(set) var accountAvatar: UIImage?
     @Published var courses: [JSON] = []
     @Published var live: [JSON] = []
     @Published var feed: [JSON] = []
@@ -115,6 +117,7 @@ final class AppModel: ObservableObject {
         quiz.bind()
         api = nil
         selected = nil
+        accountAvatar = nil
         lesson = nil
         pendingLesson = nil
         presentation = ""
@@ -144,6 +147,39 @@ final class AppModel: ObservableObject {
             rememberSelection()
             run { try await self.loadCourses() }
         } catch { self.error = error.localizedDescription }
+    }
+
+    private static func avatarURLs(from profile: JSON) -> [String] {
+        let primary = profile.field("avatar").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = profile.field("avatar_96").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (primary == fallback ? [primary] : [primary, fallback]).filter { !$0.isEmpty }
+    }
+
+    func loadAccountAvatar() async {
+        guard let api, let account = accounts.first(where: { $0.id == selected }) else { return }
+        var candidates = account.avatarURLs
+        if candidates == nil {
+            guard let profile = try? await api.profile(expectedUserID: account.userID), !Task.isCancelled,
+                  self.api === api, let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+            let urls = Self.avatarURLs(from: profile)
+            candidates = urls
+            var updated = accounts
+            updated[index].avatarURLs = urls
+            if (try? Vault.write(updated)) != nil { accounts = updated }
+        }
+        for address in candidates ?? [] {
+            guard !Task.isCancelled else { return }
+            guard let data = try? await api.image(address, purpose: .avatar),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 160
+                  ] as CFDictionary) else { continue }
+            guard self.api === api, !Task.isCancelled else { return }
+            accountAvatar = UIImage(cgImage: thumbnail)
+            return
+        }
     }
 
     private func rememberSelection() {
@@ -206,7 +242,7 @@ final class AppModel: ObservableObject {
         let address = data.field("qrImage").trimmingCharacters(in: .whitespacesAndNewlines)
         if !address.isEmpty {
             do {
-                let bytes = try await api.image(address, qr: true)
+                let bytes = try await api.image(address, purpose: .qr)
                 if let image = UIImage(data: bytes) { return image }
             } catch { try Task.checkCancellation() }
         }
@@ -228,6 +264,7 @@ final class AppModel: ObservableObject {
         try Task.checkCancellation()
         var account = Account(service: api.service, userID: api.userID, name: profile.field("name"),
                               cookieProperties: try Vault.encodeCookies(api.cookies))
+        account.avatarURLs = Self.avatarURLs(from: profile)
         account.lessons = accounts.first { $0.id == account.id }?.lessons ?? [:]
         let updated = accounts.filter { $0.id != account.id } + [account]
         try Vault.write(updated)

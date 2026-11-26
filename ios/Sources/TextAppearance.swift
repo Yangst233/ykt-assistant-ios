@@ -123,6 +123,27 @@ extension View {
     func appNavigationTitle(_ title: String) -> some View {
         navigationTitle(title).modifier(AppNavigationTextStyle())
     }
+
+    func appRootNavigationTitle(_ title: String) -> some View {
+        navigationTitle("")
+            .modifier(AppNavigationTextStyle(appliesTitleAttributes: false))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                let item = ToolbarItem(placement: .topBarLeading) {
+                    Text(title)
+                        .font(.largeTitle.bold())
+                        .appTextStyle(.largeTitle, fallback: .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                if #available(iOS 26.0, *) {
+                    item.sharedBackgroundVisibility(.hidden)
+                } else {
+                    item
+                }
+            }
+    }
 }
 
 struct AppSection<Content: View>: View {
@@ -146,16 +167,19 @@ struct AppSection<Content: View>: View {
 private struct AppNavigationTextStyle: ViewModifier {
     @EnvironmentObject private var appearance: AppAppearance
     @Environment(\.colorScheme) private var scheme
+    var appliesTitleAttributes = true
 
     func body(content: Content) -> some View {
         let palette = appearance.textAppearance[scheme]
         content
             .tint(palette.color(for: .action))
             .background {
-                NavigationTitleAttributes(style: .init(palette))
-                    .frame(width: 0, height: 0)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                if appliesTitleAttributes {
+                    NavigationTitleAttributes(style: .init(palette))
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
     }
 }

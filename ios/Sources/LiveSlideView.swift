@@ -76,22 +76,23 @@ private struct LiveSlideImage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Color(uiColor: .tertiarySystemGroupedBackground)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .overlay {
-                    if let image {
-                        GeometryReader { bounds in
-                            Image(uiImage: image).resizable().scaledToFill()
-                                .frame(width: bounds.size.width, height: bounds.size.height)
-                                .accessibilityLabel("教师正在放映的课件")
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("教师正在放映的课件")
+            } else {
+                Color(uiColor: .tertiarySystemGroupedBackground)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .overlay {
+                        if failed {
+                            Label("封面暂不可用", systemImage: "photo").foregroundStyle(.secondary)
+                        } else {
+                            ProgressView()
                         }
-                    } else if failed {
-                        Label("封面暂不可用", systemImage: "photo").foregroundStyle(.secondary)
-                    } else {
-                        ProgressView()
                     }
-                }
-                .clipped()
+            }
             Text("第 \(page) 页")
                 .font(.subheadline.monospacedDigit()).appTextStyle(.detail)
                 .frame(maxWidth: .infinity)

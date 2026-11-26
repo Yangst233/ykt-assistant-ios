@@ -141,7 +141,6 @@ private struct MaterialCollection<Rows: View>: View {
 
 @available(iOS 18.0, *)
 private struct MaterialScroll<Rows: View>: View {
-    @Environment(\.refresh) private var refresh
     let rows: Rows
     let material: ContainerMaterial
 
@@ -173,15 +172,7 @@ private struct MaterialScroll<Rows: View>: View {
         }
         .environment(\.usesGlassRows, true)
         .scrollDismissesKeyboard(.interactively)
-        .toolbar {
-            if let refresh {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("刷新", systemImage: "arrow.clockwise") {
-                        Task { await refresh() }
-                    }
-                }
-            }
-        }
+
     }
 }
 
