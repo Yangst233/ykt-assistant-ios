@@ -41,7 +41,7 @@ struct DeckView: View {
                         pageControls
                     }
                     if followTeacher != nil, let followError {
-                        Text(followError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                        Text(followError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
                         Button("重试同步") { retryFollow?() }
                     }
                     if exports.running {
@@ -51,7 +51,7 @@ struct DeckView: View {
                         ShareLink(item: file) { Label("分享导出文件", systemImage: "square.and.arrow.up") }
                     }
                     if let exportError = exports.error {
-                        Text(exportError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                        Text(exportError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
                     }
                 }
             }
@@ -288,8 +288,7 @@ struct DeckView: View {
     private var pageCount: some View {
         Text("\(index + 1) / \(deck.slides.count)")
             .font(.footnote.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .appTextStyle(.detail)
+            .appTextStyle(.detail, fallback: .secondary)
             .accessibilityLabel("第 \(index + 1) 页，共 \(deck.slides.count) 页")
     }
 

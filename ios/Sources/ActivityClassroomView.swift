@@ -19,8 +19,8 @@ struct ActivityClassroomView: View {
         MaterialList {
             AppSection("课堂信息") {
                 ClassroomMetadata(info: info, report: report, attendance: attendance)
-                if let infoError { Text(infoError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail) }
-                if let reportError { Text(reportError).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail) }
+                if let infoError { Text(infoError).font(.footnote).appTextStyle(.detail, fallback: .secondary) }
+                if let reportError { Text(reportError).font(.footnote).appTextStyle(.detail, fallback: .secondary) }
                 if infoError != nil || reportError != nil {
                     Button("重试") { retry += 1 }
                 }

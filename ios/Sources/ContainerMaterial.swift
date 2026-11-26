@@ -161,8 +161,7 @@ private struct MaterialScroll<Rows: View>: View {
                             if !section.footer.isEmpty {
                                 VStack(alignment: .leading, spacing: 4) { section.footer }
                                     .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .appTextStyle(.detail)
+                                    .appTextStyle(.detail, fallback: .secondary)
                                     .padding(.horizontal, 16)
                             }
                         }

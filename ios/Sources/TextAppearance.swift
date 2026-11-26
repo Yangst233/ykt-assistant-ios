@@ -92,28 +92,33 @@ private struct AppTextStyle: ViewModifier {
     @EnvironmentObject private var appearance: AppAppearance
     @Environment(\.colorScheme) private var scheme
     let role: AppTextRole
+    let fallback: HierarchicalShapeStyle?
 
     func body(content: Content) -> some View {
         let palette = appearance.textAppearance[scheme]
         let shadow: TitleShadowStyle? = role == .largeTitle ? palette.largeShadow : role == .smallTitle ? palette.smallShadow : nil
+        let styled = content.foregroundStyleIfSet(palette.color(for: role), fallback: fallback)
         if let shadow, shadow.enabled {
-            content.foregroundStyleIfSet(palette.color(for: role))
+            styled
                 .shadow(color: shadow.renderedColor, radius: role == .largeTitle ? 3 : 2, x: 0, y: 1)
         } else {
-            content.foregroundStyleIfSet(palette.color(for: role))
+            styled
         }
     }
 }
 
 private extension View {
-    @ViewBuilder func foregroundStyleIfSet(_ color: Color?) -> some View {
+    @ViewBuilder func foregroundStyleIfSet(_ color: Color?, fallback: HierarchicalShapeStyle?) -> some View {
         if let color { foregroundStyle(color) }
+        else if let fallback { foregroundStyle(fallback) }
         else { self }
     }
 }
 
 extension View {
-    func appTextStyle(_ role: AppTextRole) -> some View { modifier(AppTextStyle(role: role)) }
+    func appTextStyle(_ role: AppTextRole, fallback: HierarchicalShapeStyle? = nil) -> some View {
+        modifier(AppTextStyle(role: role, fallback: fallback))
+    }
 
     func appNavigationTitle(_ title: String) -> some View {
         navigationTitle(title).modifier(AppNavigationTextStyle())
@@ -234,8 +239,16 @@ private final class TitleAttributeController: UIViewController {
         let bar = navigation.navigationBar
         item.standardAppearance = configured(originals.standard ?? bar.standardAppearance, style: style)
         item.compactAppearance = (originals.compact ?? bar.compactAppearance).map { configured($0, style: style) }
-        item.scrollEdgeAppearance = (originals.scrollEdge ?? bar.scrollEdgeAppearance).map { configured($0, style: style) }
-        item.compactScrollEdgeAppearance = (originals.compactScrollEdge ?? bar.compactScrollEdgeAppearance).map { configured($0, style: style) }
+        let scrollEdge = originals.scrollEdge ?? bar.scrollEdgeAppearance ?? transparentCopy(of: bar.standardAppearance)
+        item.scrollEdgeAppearance = configured(scrollEdge, style: style)
+        let compactEdge = originals.compactScrollEdge ?? bar.compactScrollEdgeAppearance ?? scrollEdge
+        item.compactScrollEdgeAppearance = configured(compactEdge, style: style)
+    }
+
+    private func transparentCopy(of appearance: UINavigationBarAppearance) -> UINavigationBarAppearance {
+        guard let copy = appearance.copy() as? UINavigationBarAppearance else { return appearance }
+        copy.configureWithTransparentBackground()
+        return copy
     }
 
     private func configured(_ base: UINavigationBarAppearance, style: NavigationTitleStyle) -> UINavigationBarAppearance {

@@ -190,7 +190,7 @@ struct Home: View {
                     let row = model.courses[index]
                     VStack(alignment: .leading) {
                         Text(row.field("course_name").nonempty ?? row.field("course_id")).appTextStyle(.contentTitle)
-                        if let room = row.field("classroom_name").nonempty { Text(room).foregroundStyle(.secondary).appTextStyle(.secondary) }
+                        if let room = row.field("classroom_name").nonempty { Text(room).appTextStyle(.secondary, fallback: .secondary) }
                     }
                 }
             }
@@ -252,11 +252,11 @@ struct Home: View {
     private func activityLabel(_ row: JSON) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(row.field("coursewareTitle").nonempty ?? row.field("courseName"))
-                .font(.body).foregroundStyle(.primary).appTextStyle(.contentTitle)
-            Text(row.field("courseName")).font(.subheadline).foregroundStyle(.secondary).appTextStyle(.secondary)
+                .font(.body).appTextStyle(.contentTitle, fallback: .primary)
+            Text(row.field("courseName")).font(.subheadline).appTextStyle(.secondary, fallback: .secondary)
             if let ms = Double(row.field("createTime")) {
                 Text(Date(timeIntervalSince1970: ms / 1000), format: .dateTime)
-                    .font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                    .font(.footnote).appTextStyle(.detail, fallback: .secondary)
             }
         }
         .lineSpacing(3)
@@ -280,8 +280,7 @@ struct Home: View {
                             Spacer()
                             Text(account.service.title)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .appTextStyle(.detail)
+                                .appTextStyle(.detail, fallback: .secondary)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.quaternary, in: Capsule())
                             if model.selected == account.id { Image(systemName: "checkmark") }

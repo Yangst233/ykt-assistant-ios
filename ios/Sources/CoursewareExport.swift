@@ -50,7 +50,7 @@ struct ExportProgressView: View {
             if let page = export.page {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("正在下载 \(export.filename)").lineLimit(2)
-                    Text("第 \(page) 页，共 \(export.total) 页").font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                    Text("第 \(page) 页，共 \(export.total) 页").font(.footnote).appTextStyle(.detail, fallback: .secondary)
                 }
             } else {
                 Text(export.pptx ? "正在生成 PPTX…" : "正在整理 ZIP…")

@@ -56,7 +56,7 @@ struct ClassroomDetailView: View {
                     }
                     .accessibilityElement(children: .combine)
                     if model.connection.hasPrefix("连接中断") {
-                        Text(model.connection).font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                        Text(model.connection).font(.footnote).appTextStyle(.detail, fallback: .secondary)
                     }
                     ClassroomMetadata(info: info, report: report, attendance: attendance,
                                       refresh: { refresh += 1 }, refreshDisabled: checking)

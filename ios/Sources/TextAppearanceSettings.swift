@@ -43,8 +43,8 @@ struct TextAppearanceSettings: View {
                     Text("小标题").font(.headline).appTextStyle(.smallTitle)
                     Text("内容标题").font(.subheadline.weight(.semibold)).appTextStyle(.contentTitle)
                     Text("正文").appTextStyle(.body)
-                    Text("副标题与次要文字").foregroundStyle(.secondary).appTextStyle(.secondary)
-                    Text("时间与辅助信息").font(.footnote).foregroundStyle(.secondary).appTextStyle(.detail)
+                    Text("副标题与次要文字").appTextStyle(.secondary, fallback: .secondary)
+                    Text("时间与辅助信息").font(.footnote).appTextStyle(.detail, fallback: .secondary)
                     Text("按钮与链接").foregroundStyle(palette.color(for: .action) ?? .accentColor)
                 }
                 .environment(\.colorScheme, scheme)

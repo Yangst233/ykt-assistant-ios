@@ -79,7 +79,7 @@ struct NavigationRowLabel<Content: View>: View {
 
     private var row: some View {
         HStack(alignment: .center, spacing: 12) {
-            content.font(.body).foregroundStyle(.primary).appTextStyle(.contentTitle)
+            content.font(.body).appTextStyle(.contentTitle, fallback: .primary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -114,7 +114,7 @@ struct SettingsPickerRow<Selection: Hashable, Options: View>: View {
                     Picker(title, selection: $selection) { options }
                 } label: {
                     HStack(spacing: 8) {
-                        Text(title).foregroundStyle(.primary).appTextStyle(.body).layoutPriority(1)
+                        Text(title).appTextStyle(.body, fallback: .primary).layoutPriority(1)
                         Spacer(minLength: 12)
                         Text(value).appTextStyle(.secondary).lineLimit(1).truncationMode(.tail)
                         Image(systemName: "chevron.up.chevron.down")
