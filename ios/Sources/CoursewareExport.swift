@@ -81,7 +81,7 @@ struct FloatingExportView: View {
                         .gesture(DragGesture(coordinateSpace: .named("exportFloat"))
                             .updating($translation) { value, state, _ in state = value.translation }
                             .onEnded { value in
-                                location = clamped(offset(center, by: value.translation), in: bounds.size, width: width)
+                                location = clamped(translatedPoint(center, by: value.translation), in: bounds.size, width: width)
                             })
                     if export.running {
                         ExportProgressView(export: export)
@@ -97,7 +97,7 @@ struct FloatingExportView: View {
                 .frame(width: width, alignment: .leading)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-                .position(clamped(offset(center, by: translation), in: bounds.size, width: width))
+                .position(clamped(translatedPoint(center, by: translation), in: bounds.size, width: width))
             }
             .coordinateSpace(name: "exportFloat")
         }
@@ -111,6 +111,6 @@ struct FloatingExportView: View {
     }
 }
 
-private func offset(_ point: CGPoint, by translation: CGSize) -> CGPoint {
+private func translatedPoint(_ point: CGPoint, by translation: CGSize) -> CGPoint {
     CGPoint(x: point.x + translation.width, y: point.y + translation.height)
 }
