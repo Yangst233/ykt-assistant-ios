@@ -87,11 +87,11 @@ final class OfflineDownloadQueue: ObservableObject {
 
     private func startNext() {
         guard active == nil, let next = entries.first(where: { $0.status == .queued }),
-              let request = requests[next.id], let index = index(for: next.id) else { return }
+              let request = requests[next.id], let nextIndex = index(for: next.id) else { return }
         let id = next.id
         active = id
-        entries[index].page = 1
-        entries[index].status = .downloading
+        entries[nextIndex].page = 1
+        entries[nextIndex].status = .downloading
         worker = Task {
             let status: Status
             do {
