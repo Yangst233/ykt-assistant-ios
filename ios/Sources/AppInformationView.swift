@@ -6,6 +6,12 @@ struct AppInformationView: View {
     var body: some View {
         MaterialList {
             if licenses {
+                AppSection("原项目 · ykt_assistant") {
+                    LabeledContent("原作者", value: "FirmPluvia")
+                    Text("本应用基于 ykt_assistant Android 项目移植。原作者授权在其有权授权的范围内使用源码和接口说明开发 iOS 版、公开移植版源码，并以非商业形式免费发布 IPA。")
+                    Link("查看原项目 GitHub 仓库", destination: URL(string: "https://github.com/FirmPluvia/ykt_assistant")!)
+                    Link("查看移植授权（Issue #1）", destination: URL(string: "https://github.com/FirmPluvia/ykt_assistant/issues/1")!)
+                }
                 AppSection("RainClassroomAssistant") {
                     Text("弹幕功能参考 · MIT License")
                     NavigationLink {

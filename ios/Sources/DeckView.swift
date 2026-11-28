@@ -12,8 +12,9 @@ struct DeckView: View {
     var retryFollow: (() -> Void)? = nil
     var classroomModel: AppModel? = nil
     @State private var showsDanmu = false
+    @AppStorage("pptShowsScrollingDanmu") private var showsScrollingDanmu = true
+    @AppStorage("danmuEnabled") private var danmuEnabled = true
     @Environment(\.dismiss) private var dismiss
-    @ScaledMetric(relativeTo: .footnote) private var cornerControlClearance = 128.0
     @EnvironmentObject private var appearance: AppAppearance
     @StateObject private var preloadStore = PPTPreloadStore()
     @State private var index = 0
@@ -26,58 +27,35 @@ struct DeckView: View {
     @State private var namingDeck: Deck?
     @State private var retry = 0
     @State private var saved = false
-    @State private var zoom = 1.0
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @GestureState private var pinchScale: CGFloat = 1
+    @GestureState private var dragOffset: CGSize = .zero
+    @State private var showsLandscapeControls = true
 
     var body: some View {
         NavigationStack {
             GeometryReader { bounds in
                 let landscape = bounds.size.width > bounds.size.height
-                VStack {
+                Group {
                     if landscape {
                         landscapeViewport
                     } else {
-                        slideViewport
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        portraitControls
-                    }
-                    if followTeacher != nil, let followError {
-                        Text(followError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
-                        Button("重试同步") { retryFollow?() }
-                    }
-                    if exports.running {
-                        ExportProgressView(export: exports).padding(.horizontal)
-                    }
-                    if let file = exports.file {
-                        ShareLink(item: file) { Label("分享导出文件", systemImage: "square.and.arrow.up") }
-                    }
-                    if let exportError = exports.error {
-                        Text(exportError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
+                        VStack {
+                            slideViewport()
+                            portraitControls
+                            readerStatus
+                        }
                     }
                 }
+                .toolbar(landscape ? .hidden : .visible, for: .navigationBar)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { FrostedReaderBackground() }
             .appNavigationTitle(deck.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu("操作", systemImage: "ellipsis.circle") {
-                        if classroomModel != nil {
-                            Button("课堂弹幕", systemImage: "text.bubble") { showsDanmu = true }
-                        }
-                        Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exports.running)
-                        Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exports.running)
-                        Button("导出 ZIP", systemImage: "archivebox") { exports.start(deck, api: api, pptx: false, name: nil) }.disabled(exports.running)
-                        Button("重新载入当前页", systemImage: "arrow.clockwise") {
-                            if let key = slideCacheKey {
-                                appearance.removeCachedPPTImage(key)
-                                preloadStore.remove(key)
-                            }
-                            retry += 1
-                        }
-                    }
-                }
+                ToolbarItem(placement: .primaryAction) { readerMenu }
             }
             .onChange(of: deck.id, initial: true) { _, _ in
                 index = deck.index(for: teacherPage ?? deck.live?.initialPage) ?? 0
@@ -86,7 +64,7 @@ struct DeckView: View {
                 if followTeacher?.wrappedValue == true, let target = deck.index(for: page) { index = target }
             }
             .task(id: "\(deck.id):\(index):\(retry)") {
-                zoom = 1
+                resetZoom()
                 let current = index
                 guard let key = cacheKey(for: current) else { image = nil; return }
                 if let cached = cachedPage(key) {
@@ -199,32 +177,119 @@ struct DeckView: View {
         }
     }
 
-    private var slideViewport: some View {
-        GeometryReader { geometry in
-            if zoom > 1, let image {
-                ScrollView([.horizontal, .vertical]) {
-                    slideImage(image)
-                        .frame(width: geometry.size.width * zoom, height: geometry.size.height * zoom)
-                }
-                .onTapGesture(count: 2) { zoom = 1 }
-            } else {
-                ZStack {
-                    Color.clear
-                    if let image {
-                        slideImage(image)
-                            .onTapGesture(count: 2) { zoom = 2 }
-                    } else {
-                        ProgressView()
-                    }
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .contentShape(Rectangle())
-                .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { gesture in
-                    let movement = gesture.translation
-                    guard abs(movement.width) >= 44, abs(movement.width) > abs(movement.height) else { return }
-                    movePage(by: movement.width < 0 ? 1 : -1)
-                })
+    private var readerMenu: some View {
+        Menu("操作", systemImage: "ellipsis.circle") {
+            if classroomModel != nil, danmuEnabled {
+                Toggle("显示弹幕", isOn: $showsScrollingDanmu)
             }
+            if classroomModel != nil {
+                Button("课堂弹幕", systemImage: "text.bubble") { showsDanmu = true }
+            }
+            Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exports.running)
+            Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exports.running)
+            Button("导出 ZIP", systemImage: "archivebox") { exports.start(deck, api: api, pptx: false, name: nil) }.disabled(exports.running)
+            Button("重新载入当前页", systemImage: "arrow.clockwise") {
+                if let key = slideCacheKey {
+                    appearance.removeCachedPPTImage(key)
+                    preloadStore.remove(key)
+                }
+                retry += 1
+            }
+        }
+    }
+
+    @ViewBuilder private var readerStatus: some View {
+        if followTeacher != nil, let followError {
+            Text(followError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
+            Button("重试同步") { retryFollow?() }
+        }
+        if exports.running {
+            ExportProgressView(export: exports).padding(.horizontal)
+        }
+        if let file = exports.file {
+            ShareLink(item: file) { Label("分享导出文件", systemImage: "square.and.arrow.up") }
+        }
+        if let exportError = exports.error {
+            Text(exportError).font(.footnote).appTextStyle(.detail, fallback: .secondary)
+        }
+    }
+
+    private func resetZoom() {
+        zoom = 1
+        pan = .zero
+    }
+
+    private func clampedPan(_ offset: CGSize, scale: CGFloat, image: UIImage, in size: CGSize) -> CGSize {
+        let fit = min(size.width / max(1, image.size.width), size.height / max(1, image.size.height))
+        let x = max(0, (image.size.width * fit * scale - size.width) / 2)
+        let y = max(0, (image.size.height * fit * scale - size.height) / 2)
+        return CGSize(width: min(x, max(-x, offset.width)), height: min(y, max(-y, offset.height)))
+    }
+
+    private func slideViewport(toggleControls: (() -> Void)? = nil) -> some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let scale = min(5, max(0.5, zoom * pinchScale))
+            ZStack {
+                Color.clear
+                if let image {
+                    let offset = clampedPan(
+                        CGSize(width: pan.width + dragOffset.width, height: pan.height + dragOffset.height),
+                        scale: scale, image: image, in: size
+                    )
+                    slideImage(image)
+                        .frame(width: size.width, height: size.height)
+                        .scaleEffect(scale)
+                        .offset(offset)
+                        .accessibilityActions {
+                            if let toggleControls {
+                                Button("显示或隐藏播放器控件", action: toggleControls)
+                            }
+                        }
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+            .overlay {
+                if danmuEnabled, showsScrollingDanmu, let classroomModel {
+                    ScrollingDanmuView(danmu: classroomModel.danmu, topInset: toggleControls == nil ? 8 : 56)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(TapGesture(count: 2).onEnded {
+                guard image != nil else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if zoom == 1 { zoom = 2 } else { resetZoom() }
+                }
+            }.exclusively(before: TapGesture().onEnded { toggleControls?() }))
+            .simultaneousGesture(MagnifyGesture()
+                .updating($pinchScale) { value, state, _ in state = value.magnification }
+                .onEnded { value in
+                    guard let image else { return }
+                    zoom = min(5, max(0.5, zoom * value.magnification))
+                    if abs(zoom - 1) < 0.02 { resetZoom() }
+                    pan = clampedPan(pan, scale: zoom, image: image, in: size)
+                })
+            .simultaneousGesture(DragGesture(minimumDistance: 20)
+                .updating($dragOffset) { value, state, _ in
+                    if zoom > 1 && pinchScale == 1 { state = value.translation }
+                }
+                .onEnded { value in
+                    guard let image, pinchScale == 1 else { return }
+                    let movement = value.translation
+                    if zoom > 1 {
+                        pan = clampedPan(
+                            CGSize(width: pan.width + movement.width, height: pan.height + movement.height),
+                            scale: zoom, image: image, in: size
+                        )
+                    } else if abs(movement.width) >= 44, abs(movement.width) > abs(movement.height) {
+                        movePage(by: movement.width < 0 ? 1 : -1)
+                    }
+                })
         }
     }
 
@@ -239,36 +304,59 @@ struct DeckView: View {
     }
 
     private var landscapeViewport: some View {
-        GeometryReader { bounds in
-            let availableWidth = max(0, bounds.size.width - 112)
-            let slideWidth = image.map { slide in
-                min(availableWidth, bounds.size.height * slide.size.width / max(1, slide.size.height))
-            } ?? 0
-            let roomAtEachSide = (bounds.size.width - slideWidth) / 2
-            let canOverlayCorners = zoom == 1 && roomAtEachSide >= cornerControlClearance
-            if canOverlayCorners {
-                landscapeSlide
-                    .overlay(alignment: .bottom) { cornerControls }
-            } else {
-                VStack(spacing: 0) {
-                    landscapeSlide
+        ZStack {
+            slideViewport {
+                withAnimation(.easeInOut(duration: 0.2)) { showsLandscapeControls.toggle() }
+            }
+            .ignoresSafeArea()
+
+            if showsLandscapeControls {
+                VStack {
+                    HStack(spacing: 12) {
+                        Button("关闭") { dismiss() }
+                            .modifier(ReaderControlButton())
+                        Text(deck.title)
+                            .font(.headline)
+                            .appTextStyle(.smallTitle, fallback: .primary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityAction(named: Text("隐藏播放器控件")) {
+                                showsLandscapeControls = false
+                            }
+                        readerMenu.modifier(ReaderControlButton())
+                    }
+                    .padding(.horizontal, 8)
+                    Spacer(minLength: 0)
+                    readerStatus
                     cornerControls
                 }
+                .padding(.top, 4)
+                .transition(.opacity)
+
+                HStack {
+                    landscapePageButton("上一页", icon: "chevron.left", offset: -1)
+                    Spacer(minLength: 0)
+                    landscapePageButton("下一页", icon: "chevron.right", offset: 1)
+                }
+                .padding(.horizontal, 8)
+                .transition(.opacity)
             }
+        }
+        .overlay(alignment: .bottom) {
+            if zoom != 1 { resetZoomButton.padding(.bottom, 8) }
         }
     }
 
-    private var landscapeSlide: some View {
-        slideViewport
-            .padding(.horizontal, 56)
-            .overlay(alignment: .leading) {
-                landscapePageButton("上一页", icon: "chevron.left", offset: -1)
-                    .padding(.leading, 8)
-            }
-            .overlay(alignment: .trailing) {
-                landscapePageButton("下一页", icon: "chevron.right", offset: 1)
-                    .padding(.trailing, 8)
-            }
+    private var resetZoomButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { resetZoom() }
+        } label: {
+            Label("还原", systemImage: "arrow.counterclockwise")
+                .frame(minHeight: 44)
+        }
+        .modifier(ReaderControlButton())
+        .accessibilityLabel("还原课件缩放")
     }
 
     @ViewBuilder private var cornerControls: some View {
@@ -318,6 +406,7 @@ struct DeckView: View {
 
     private var portraitControls: some View {
         VStack(spacing: 6) {
+            if zoom != 1 { resetZoomButton }
             if let followTeacher {
                 FollowTeacherButton(isFollowing: followTeacher)
             }
@@ -529,5 +618,16 @@ struct LiveDeckReader: View {
     private struct FollowRequest: Equatable {
         let presentation: String?
         let retry: Int
+    }
+}
+
+
+private struct ReaderControlButton: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.large)
+        } else {
+            content.buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
+        }
     }
 }

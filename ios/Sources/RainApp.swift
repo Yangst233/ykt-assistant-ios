@@ -382,7 +382,7 @@ struct Home: View {
                 NavigationLink {
                     pptSettings
                 } label: {
-                    NavigationRowLabel { Label("PPT", systemImage: "slides") }
+                    NavigationRowLabel { Label("PPT", systemImage: "rectangle.on.rectangle") }
                 }
                 .glassNavigationInteraction()
             }
