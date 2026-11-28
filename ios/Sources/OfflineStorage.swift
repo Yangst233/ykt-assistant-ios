@@ -37,6 +37,7 @@ enum OfflineStorage {
         let count: Int
         let bytes: Int
         let date: Date
+        let sourceKey: String?
 
         func deck(in directory: URL) -> Deck {
             let location = directory.appendingPathComponent(id.uuidString)
@@ -72,7 +73,8 @@ enum OfflineStorage {
             try data.write(to: temporary.appendingPathComponent("\(index).image"), options: .completeFileProtection)
             bytes += data.count
         }
-        let record = SavedDeck(id: id, title: deck.title, count: deck.slides.count, bytes: bytes, date: Date())
+        let record = SavedDeck(id: id, title: deck.title, count: deck.slides.count, bytes: bytes, date: Date(),
+                               sourceKey: deck.offlineSourceKey)
         try JSONEncoder().encode(record).write(to: temporary.appendingPathComponent("deck.json"), options: .completeFileProtection)
         try Task.checkCancellation()
         try FileManager.default.moveItem(at: temporary, to: directory.appendingPathComponent(id.uuidString))

@@ -9,6 +9,7 @@ struct RainApp: App {
     @StateObject private var model = AppModel()
     @StateObject private var appearance = AppAppearance()
     @StateObject private var exports = CoursewareExport()
+    @StateObject private var offlineDownloads = OfflineDownloadQueue()
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -16,6 +17,7 @@ struct RainApp: App {
             Home(model: model)
                 .environmentObject(appearance)
                 .environmentObject(exports)
+                .environmentObject(offlineDownloads)
                 .preferredColorScheme(appearance.theme.scheme)
                 .onChange(of: phase, initial: true) { _, new in model.phase(new) }
         }
@@ -25,6 +27,7 @@ struct RainApp: App {
 @MainActor
 struct Home: View {
     @ObservedObject var model: AppModel
+    @AppStorage("automaticallySaveCourseware") private var automaticallySaveCourseware = false
     @EnvironmentObject private var appearance: AppAppearance
     @EnvironmentObject private var exports: CoursewareExport
     private enum HomeTab: Hashable { case live, all, activities, account }
@@ -370,6 +373,10 @@ struct Home: View {
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
             AppSection("设置") {
+                NavigationLink { OfflineDownloadList(account: model.selected) } label: {
+                    NavigationRowLabel { Label("下载列表", systemImage: "arrow.down.circle") }
+                }
+                .glassNavigationInteraction()
                 NavigationLink { DanmuSettingsView() } label: {
                     NavigationRowLabel { Label("弹幕设置", systemImage: "text.bubble") }
                 }
@@ -415,6 +422,7 @@ struct Home: View {
 
     private var pptSettings: some View {
         MaterialForm {
+            Toggle("自动保存课件至课件库", isOn: $automaticallySaveCourseware)
             Toggle("缓存 PPT", isOn: $appearance.cachePPT)
             if appearance.cachePPT {
                 SettingsPickerRow("预加载 PPT", value: appearance.pptPreload.title, selection: $appearance.pptPreload) {

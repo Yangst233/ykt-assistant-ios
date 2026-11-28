@@ -8,6 +8,14 @@ struct Deck: Identifiable {
     let slides: [[String]]
     var live: LiveContext? = nil
     var localPages: [URL]? = nil
+    var archiveSourceID: String? = nil
+
+    var offlineSourceKey: String {
+        if let live { return "live:\(live.lessonID):\(live.presentationID):\(slides.count)" }
+        if let archiveSourceID { return "archive:\(archiveSourceID):\(slides.count)" }
+        let urls = slides.flatMap { $0 }.joined(separator: "\n")
+        return "pages:" + OfflineStorage.key(urls)
+    }
 
     func pageData(_ index: Int, api: RainAPI) async throws -> Data {
         if let localPages { return try Data(contentsOf: localPages[index]) }
@@ -622,7 +630,8 @@ final class AppModel: ObservableObject {
             guard !slides.isEmpty, slides.allSatisfy({ !$0.isEmpty }) else { throw RainError.invalid("暂无可查看的课件页面") }
             try Task.checkCancellation()
             let name = data.field("title")
-            self.deck = Deck(title: name.isEmpty ? title : name, slides: slides)
+            self.deck = Deck(title: name.isEmpty ? title : name, slides: slides,
+                             archiveSourceID: "\(historical):\(id)")
         }
     }
 }

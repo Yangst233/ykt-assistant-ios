@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct OfflineDeckLibrary: View {
     @ObservedObject var model: AppModel
+    @EnvironmentObject private var queue: OfflineDownloadQueue
     @State private var records: [OfflineStorage.SavedDeck] = []
     @State private var search = ""
     @State private var error: String?
@@ -42,6 +43,7 @@ struct OfflineDeckLibrary: View {
         .appNavigationTitle("离线课件库")
         .searchable(text: $search, prompt: "搜索课件")
         .onAppear(perform: reload)
+        .onChange(of: queue.libraryRevision) { _, _ in reload() }
         .onChange(of: model.selected) { _, _ in pendingDelete = nil; reload() }
         .confirmationDialog("删除离线课件？", isPresented: Binding(get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }), presenting: pendingDelete) { record in
@@ -66,44 +68,51 @@ struct OfflineDeckLibrary: View {
 }
 
 @MainActor
-struct OfflineDownloadView: View {
-    let deck: Deck
-    let api: RainAPI
-    @Environment(\.dismiss) private var dismiss
-    @State private var attempt = 0
-    @State private var page = 0
-    @State private var complete = false
-    @State private var error: String?
+struct OfflineDownloadList: View {
+    let account: String?
+    @EnvironmentObject private var queue: OfflineDownloadQueue
 
     var body: some View {
-        MaterialForm {
-            AppSection(deck.title) {
-                if complete {
-                    Label("已保存到离线课件库", systemImage: "checkmark.circle")
-                } else if let error {
-                    Text(error)
-                    Button("重试") { attempt += 1 }
-                } else {
-                    ProgressView("正在下载第 \(page) 页，共 \(deck.slides.count) 页",
-                                 value: Double(page), total: Double(max(1, deck.slides.count)))
+        MaterialList {
+            let entries = queue.entries.filter { $0.account == account }
+            if entries.isEmpty {
+                ContentUnavailableView("暂无下载任务", systemImage: "arrow.down.circle",
+                    description: Text("在课件播放器中选择「保存至离线课件库」即可添加任务。"))
+            }
+            ForEach(entries.reversed()) { entry in
+                AppSection(entry.title) {
+                    switch entry.status {
+                    case .queued:
+                        Label("等待下载", systemImage: "clock")
+                        Button("取消下载", role: .destructive) { queue.cancel(entry.id) }
+                    case .downloading, .cancelling:
+                        let cancelling = entry.status == .cancelling
+                        ProgressView(cancelling ? "正在取消…" : "正在下载第 \(entry.page) 页，共 \(entry.total) 页",
+                                     value: Double(max(0, entry.page - 1)), total: Double(entry.total))
+                        if !cancelling {
+                            Button("取消下载", role: .destructive) { queue.cancel(entry.id) }
+                        }
+                    case .saved:
+                        Label("已保存至离线课件库", systemImage: "checkmark.circle")
+                        removeRecord(entry)
+                    case .cancelled:
+                        Label("已取消", systemImage: "xmark.circle")
+                        Button("重新下载") { queue.retry(entry.id) }
+                        removeRecord(entry)
+                    case .failed(let error):
+                        Label("下载失败", systemImage: "exclamationmark.circle")
+                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                        Button("重试") { queue.retry(entry.id) }
+                        removeRecord(entry)
+                    }
                 }
             }
         }
         .wallpaperSurface()
-        .appNavigationTitle("下载课件")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(complete || error != nil ? "关闭" : "取消") { dismiss() }
-            }
-        }
-        .task(id: attempt) {
-            error = nil
-            page = 0
-            do {
-                let directory = try OfflineStorage.directory(api.service.rawValue + ":" + api.userID)
-                try await OfflineStorage.download(deck, api: api, into: directory) { page = $0 }
-                complete = true
-            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-        }
+        .appNavigationTitle("下载列表")
+    }
+
+    private func removeRecord(_ entry: OfflineDownloadQueue.Entry) -> some View {
+        Button("移除任务记录", role: .destructive) { queue.remove(entry.id) }
     }
 }

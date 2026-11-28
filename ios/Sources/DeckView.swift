@@ -12,9 +12,12 @@ struct DeckView: View {
     var retryFollow: (() -> Void)? = nil
     var classroomModel: AppModel? = nil
     @State private var showsDanmu = false
-    @State private var showsOfflineDownload = false
+    @EnvironmentObject private var offlineDownloads: OfflineDownloadQueue
+    @State private var downloadNotice: String?
+    @State private var noticeID: UUID?
     @AppStorage("pptShowsScrollingDanmu") private var showsScrollingDanmu = true
     @AppStorage("danmuEnabled") private var danmuEnabled = true
+    @AppStorage("automaticallySaveCourseware") private var automaticallySaveCourseware = false
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appearance: AppAppearance
     @StateObject private var preloadStore = PPTPreloadStore()
@@ -63,6 +66,10 @@ struct DeckView: View {
             }
             .onChange(of: teacherPage) { _, page in
                 if followTeacher?.wrappedValue == true, let target = deck.index(for: page) { index = target }
+            }
+            .task(id: "\(deck.id):\(automaticallySaveCourseware)") {
+                guard automaticallySaveCourseware, deck.localPages == nil, !Task.isCancelled else { return }
+                offlineDownloads.enqueue(deck: deck, api: api, automatic: true)
             }
             .task(id: "\(deck.id):\(index):\(retry)") {
                 resetZoom()
@@ -131,8 +138,25 @@ struct DeckView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showsOfflineDownload) {
-                NavigationStack { OfflineDownloadView(deck: deck, api: api) }
+            .overlay(alignment: .bottom) {
+                if let downloadNotice {
+                    Text(downloadNotice)
+                        .font(.subheadline)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 64)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .task(id: noticeID) {
+                guard noticeID != nil else { return }
+                do {
+                    try await Task.sleep(for: .seconds(2.5))
+                    downloadNotice = nil
+                } catch {}
             }
             .sheet(item: $automaticShare) { request in
                 ExportActivitySheet(file: request.file)
@@ -197,7 +221,12 @@ struct DeckView: View {
             }
             .disabled(exports.running)
             if deck.localPages == nil, !api.userID.isEmpty {
-                Button("下载至离线课件库", systemImage: "arrow.down.circle") { showsOfflineDownload = true }
+                Button("保存至离线课件库", systemImage: "arrow.down.circle") {
+                    let message = offlineDownloads.enqueue(deck: deck, api: api)
+                    downloadNotice = message
+                    noticeID = UUID()
+                    AccessibilityNotification.Announcement(message).post()
+                }
             }
             Button("重新载入当前页", systemImage: "arrow.clockwise") {
                 if let key = slideCacheKey {
