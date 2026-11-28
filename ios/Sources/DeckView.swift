@@ -12,6 +12,7 @@ struct DeckView: View {
     var retryFollow: (() -> Void)? = nil
     var classroomModel: AppModel? = nil
     @State private var showsDanmu = false
+    @State private var showsOfflineDownload = false
     @AppStorage("pptShowsScrollingDanmu") private var showsScrollingDanmu = true
     @AppStorage("danmuEnabled") private var danmuEnabled = true
     @Environment(\.dismiss) private var dismiss
@@ -73,9 +74,8 @@ struct DeckView: View {
                     return
                 }
                 image = nil
-                let urls = deck.slides[current]
                 do {
-                    let data = try await api.slideImage(urls)
+                    let data = try await deck.pageData(current, api: api)
                     try Task.checkCancellation()
                     guard let bitmap = UIImage(data: data) else { throw RainError.invalid("课件图片") }
                     appearance.cachePPTImage(bitmap, key: key)
@@ -131,6 +131,9 @@ struct DeckView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showsOfflineDownload) {
+                NavigationStack { OfflineDownloadView(deck: deck, api: api) }
+            }
             .sheet(item: $automaticShare) { request in
                 ExportActivitySheet(file: request.file)
             }
@@ -145,7 +148,8 @@ struct DeckView: View {
 
     private func cacheKey(for page: Int) -> String? {
         guard deck.slides.indices.contains(page) else { return nil }
-        return ([api.service.rawValue, api.userID] + deck.slides[page]).joined(separator: "\n")
+        let sources = deck.localPages.map { [$0[page].absoluteString] } ?? deck.slides[page]
+        return ([api.service.rawValue, api.userID] + sources).joined(separator: "\n")
     }
 
     private func cachedPage(_ key: String) -> UIImage? {
@@ -169,7 +173,7 @@ struct DeckView: View {
                     preloadStore.store(data, key: key)
                     continue
                 }
-                guard let data = try? await api.slideImage(deck.slides[next]), !Task.isCancelled,
+                guard let data = try? await deck.pageData(next, api: api), !Task.isCancelled,
                       appearance.cachePPT, let bitmap = UIImage(data: data) else { continue }
                 preloadStore.store(data, key: key)
                 appearance.cachePPTImage(bitmap, key: key)
@@ -188,6 +192,13 @@ struct DeckView: View {
             Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exports.running)
             Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exports.running)
             Button("导出 ZIP", systemImage: "archivebox") { exports.start(deck, api: api, pptx: false, name: nil) }.disabled(exports.running)
+            Button("导出 PDF", systemImage: "doc.richtext") {
+                exports.start(deck, api: api, pptx: false, name: nil, pdf: true)
+            }
+            .disabled(exports.running)
+            if deck.localPages == nil, !api.userID.isEmpty {
+                Button("下载至离线课件库", systemImage: "arrow.down.circle") { showsOfflineDownload = true }
+            }
             Button("重新载入当前页", systemImage: "arrow.clockwise") {
                 if let key = slideCacheKey {
                     appearance.removeCachedPPTImage(key)

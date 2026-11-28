@@ -4,6 +4,7 @@ struct QuizDraft: Equatable {
     var options: Set<String> = []
     var blanks: [String] = []
     var text = ""
+    var pictures: [String] = []
 }
 
 struct ClassroomQuestion: Identifiable {
@@ -53,10 +54,11 @@ struct ClassroomQuestion: Identifiable {
             }
             result = draft.blanks
         } else if type == 5 {
-            guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw RainError.invalid("请填写文字答案")
+            guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.pictures.isEmpty else {
+                throw RainError.invalid("请填写文字或添加答案图片")
             }
-            result = ["content": draft.text, "pics": [], "videos": []] as JSON
+            let pictures = draft.pictures.map { ["pic": $0, "thumb": $0 + "?imageView2/2/w/568"] }
+            result = ["content": draft.text, "pics": pictures, "videos": []] as JSON
         } else { throw RainError.invalid("暂不支持该题型") }
         let retry = finished || deadline.map { now >= $0 } == true
         guard !retry || eventTime > 0 else { throw RainError.invalid("缺少题目原始时间，无法补交") }
@@ -147,6 +149,35 @@ final class QuizModel: ObservableObject {
 
     func question(_ id: String) -> ClassroomQuestion? { questions.first { $0.id == id } }
 
+    func batchSource() async throws -> (RainAPI, String, [ArchivedQuestion]) {
+        guard let api, let lesson else { throw RainError.invalid("请先进入课堂") }
+        let scope = epoch
+        let opened = questions
+        var pages: [String: [JSON]] = [:]
+        var results: [ArchivedQuestion] = []
+        for (offset, q) in opened.enumerated() where !q.presentation.isEmpty {
+            try Task.checkCancellation()
+            guard epoch == scope else { throw CancellationError() }
+            if pages[q.presentation] == nil {
+                let data = try await api.request("/api/v3/lesson/presentation/fetch",
+                    query: [.init(name: "presentation_id", value: q.presentation)], bearer: lesson.bearer).0.object("data")
+                guard data["id"] == nil || data.field("id") == q.presentation else { throw RainError.invalid("题目课件关联") }
+                pages[q.presentation] = try data.rows("slides")
+            }
+            guard let slide = pages[q.presentation]?.first(where: {
+                ($0["problem"] as? JSON)?.field("problemId") == q.id
+            }), let spec = slide["problem"] as? JSON else { continue }
+            var question = q
+            question.specification = spec
+            question.slide = slide
+            let id = "live:\(lesson.id):\(q.presentation):\(q.id)"
+            results.append(.init(id: id, title: "课堂 \(lesson.id) · 题目 \(offset + 1)", question: question))
+        }
+        try Task.checkCancellation()
+        guard epoch == scope else { throw CancellationError() }
+        return (api, api.service.rawValue + ":" + api.userID, results)
+    }
+
     func update(_ id: String, round: UUID, _ change: (inout ClassroomQuestion) -> Void) {
         guard let index = questions.firstIndex(where: { $0.id == id && $0.round == round }) else { return }
         change(&questions[index])
@@ -230,9 +261,25 @@ final class QuizModel: ObservableObject {
 
     func cancelAnalysis() { tasks["ai"]?.cancel() }
 
+    func uploadPicture(_ data: Data, id: String, round: UUID) async throws {
+        guard let api, let q = question(id), q.round == round, q.type == 5,
+              !q.submitted, !q.sending, q.draft.pictures.count < 6 else { return }
+        let scope = epoch
+        let url = try await api.uploadAnswerImage(data)
+        try Task.checkCancellation()
+        guard epoch == scope else { return }
+        update(id, round: round) {
+            if !$0.submitted, !$0.sending, $0.draft.pictures.count < 6 { $0.draft.pictures.append(url) }
+        }
+    }
+
     func apply(_ suggestion: QuizSuggestion) {
         guard let q = question(suggestion.questionID), q.round == suggestion.round, q.signature == suggestion.signature,
               !q.submitted, !q.sending, suggestion.status == "answered" else { return }
-        update(q.id, round: q.round) { $0.draft = suggestion.draft }
+        update(q.id, round: q.round) {
+            var draft = suggestion.draft
+            draft.pictures = $0.draft.pictures
+            $0.draft = draft
+        }
     }
 }

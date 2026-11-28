@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct ClassroomQuestionsView: View {
     @ObservedObject var model: QuizModel
@@ -6,6 +7,11 @@ struct ClassroomQuestionsView: View {
         MaterialList {
             if model.questions.isEmpty {
                 ContentUnavailableView("尚未收到课堂题目", systemImage: "questionmark.bubble")
+            } else {
+                NavigationLink {
+                    LiveBatchAnalysisView(model: model)
+                } label: { NavigationRowLabel { Label("批量 AI 分析", systemImage: "sparkles") } }
+                .glassNavigationInteraction()
             }
             ForEach(Array(model.questions.enumerated().reversed()), id: \.element.id) { index, q in
                 NavigationLink {
@@ -34,6 +40,9 @@ struct QuestionView: View {
     @State private var localError: String?
     @State private var configuration: AIConfiguration?
     @State private var confirmRound: UUID?
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var photos: [PhotosPickerItem] = []
+    @State private var photoProgress: String?
 
     var body: some View {
         MaterialList {
@@ -49,7 +58,8 @@ struct QuestionView: View {
                         .disabled(q.sending || q.submitted)
                     if (1...6).contains(q.type), !q.submitted {
                         Section {
-                            Button("确认答案") { confirmRound = q.round; confirmSubmit = true }.disabled(q.sending)
+                            Button("确认答案") { confirmRound = q.round; confirmSubmit = true }
+                                .disabled(q.sending || photoProgress != nil || !photos.isEmpty)
                         }
                         aiSection(q)
                     }
@@ -65,8 +75,29 @@ struct QuestionView: View {
         .wallpaperSurface()
         .appNavigationTitle("课堂题目")
         .onChange(of: model.question(id)?.round, initial: true) { _, _ in
+            photos = []
             if model.question(id)?.specification == nil { model.load(id) }
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .background { photos = [] } }
+        .task(id: photos) {
+            guard !photos.isEmpty, let q = model.question(id) else { return }
+            let selection = photos
+            defer { if photos == selection { photos = []; photoProgress = nil } }
+            do {
+                for (index, photo) in selection.enumerated() {
+                    try Task.checkCancellation()
+                    photoProgress = "正在上传图片 \(index + 1) / \(selection.count)"
+                    guard let data = try await photo.loadTransferable(type: Data.self) else {
+                        throw RainError.invalid("无法读取所选图片")
+                    }
+                    try Task.checkCancellation()
+                    try await model.uploadPicture(data, id: id, round: q.round)
+                }
+            } catch {
+                if !Task.isCancelled { localError = error.localizedDescription }
+            }
+        }
+        .onChange(of: photos) { _, selection in if selection.isEmpty { photoProgress = nil } }
         .sheet(isPresented: $settings) { NavigationStack { AISettingsView() } }
         .alert("提交课堂答案", isPresented: $confirmSubmit) {
             Button("取消", role: .cancel) {}
@@ -130,6 +161,25 @@ struct QuestionView: View {
             TextField("输入文字答案", text: Binding(get: { model.question(id)?.draft.text ?? "" },
                 set: { text in model.update(id, round: q.round) { $0.draft.text = text } }), axis: .vertical)
                 .lineLimit(3...10)
+            if let photoProgress { ProgressView(photoProgress) }
+            ForEach(q.draft.pictures, id: \.self) { picture in
+                HStack {
+                    AsyncImage(url: URL(string: picture + "?imageView2/2/w/568")) { image in
+                        image.resizable().scaledToFit()
+                    } placeholder: { Image(systemName: "photo") }
+                    .frame(width: 64, height: 64)
+                    Spacer()
+                    Button("移除图片", role: .destructive) {
+                        model.update(id, round: q.round) { $0.draft.pictures.removeAll { $0 == picture } }
+                    }
+                }
+            }
+            if q.draft.pictures.count < 6 {
+                PhotosPicker(selection: $photos, maxSelectionCount: 6 - q.draft.pictures.count, matching: .images) {
+                    Label("添加答案图片", systemImage: "photo.badge.plus")
+                }
+                .disabled(photoProgress != nil || !photos.isEmpty)
+            }
         } else {
             Text("暂不支持该题型")
         }

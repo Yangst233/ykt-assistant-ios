@@ -7,6 +7,12 @@ struct Deck: Identifiable {
     let title: String
     let slides: [[String]]
     var live: LiveContext? = nil
+    var localPages: [URL]? = nil
+
+    func pageData(_ index: Int, api: RainAPI) async throws -> Data {
+        if let localPages { return try Data(contentsOf: localPages[index]) }
+        return try await api.slideImage(slides[index])
+    }
 
     struct LiveContext {
         let lessonID: String
@@ -33,6 +39,7 @@ final class AppModel: ObservableObject {
     @Published var courses: [JSON] = []
     @Published var live: [JSON] = []
     @Published var feed: [JSON] = []
+    @Published private(set) var feedUpdated: Date?
     @Published private(set) var loadingFeed = false
     @Published private(set) var feedError: String?
     @Published var qr: UIImage?
@@ -129,6 +136,7 @@ final class AppModel: ObservableObject {
         courses = []
         live = []
         feed = []
+        feedUpdated = nil
         feedRequest = nil
         loadingFeed = false
         feedError = nil
@@ -146,6 +154,7 @@ final class AppModel: ObservableObject {
             api.userID = account.userID
             self.api = api
             selected = account.id
+            restoreFeed(account.id)
             rememberSelection()
             run { try await self.loadCourses() }
         } catch { self.error = error.localizedDescription }
@@ -525,7 +534,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshFeed(reset: Bool) async {
-        guard let api, feedRequest == nil, reset || canPage else { return }
+        guard let api, let account = selected, feedRequest == nil, reset || canPage else { return }
         let requestID = UUID()
         feedRequest = requestID
         loadingFeed = true
@@ -543,15 +552,40 @@ final class AppModel: ObservableObject {
             let page = try await api.request("/api/v3/activities/received/", body: body).0.rows("data")
             try Task.checkCancellation()
             guard feedRequest == requestID else { return }
-            if reset { feed = []; seenCursors = [] }
-            var keys = Set(feed.map(feedKey))
-            feed += page.filter { keys.insert(feedKey($0)).inserted }
-            cursor = page.last?.field("sort")
-            canPage = cursor.map { !$0.isEmpty && seenCursors.insert($0).inserted } ?? false
+            if reset {
+                let firstKeys = Set(page.map(feedKey))
+                let overlap = feed.lastIndex { firstKeys.contains(feedKey($0)) }
+                let previous = overlap.map { Array(feed.dropFirst($0 + 1)) } ?? feed
+                var keys = Set<String>()
+                feed = (page + previous).filter { keys.insert(feedKey($0)).inserted }
+                if overlap == nil || previous.isEmpty {
+                    cursor = page.last?.field("sort")
+                    canPage = cursor.map { !$0.isEmpty } ?? false
+                }
+                seenCursors = Set(cursor.map { [$0] } ?? [])
+            } else {
+                var keys = Set(feed.map(feedKey))
+                feed += page.filter { keys.insert(feedKey($0)).inserted }
+                cursor = page.last?.field("sort")
+                canPage = cursor.map { !$0.isEmpty && seenCursors.insert($0).inserted } ?? false
+            }
+            feedUpdated = Date()
+            try OfflineStorage.write(["feed": feed, "cursor": cursor as Any? ?? NSNull(),
+                                      "canPage": canPage, "updated": feedUpdated?.timeIntervalSince1970 ?? 0],
+                                     name: "feed.json", account: account)
             try saveSession()
         } catch {
             if feedRequest == requestID && !Task.isCancelled { feedError = error.localizedDescription }
         }
+    }
+
+    private func restoreFeed(_ account: String) {
+        guard let saved = OfflineStorage.read("feed.json", account: account) else { return }
+        feed = saved["feed"] as? [JSON] ?? []
+        cursor = saved["cursor"] as? String
+        canPage = saved["canPage"] as? Bool ?? true
+        seenCursors = Set(cursor.map { [$0] } ?? [])
+        feedUpdated = (saved["updated"] as? Double).map(Date.init(timeIntervalSince1970:))
     }
 
     private func feedKey(_ item: JSON) -> String {
@@ -583,14 +617,7 @@ final class AppModel: ObservableObject {
     func openDeck(id: String, title: String, historical: String) {
         run {
             guard let api = self.api, !id.isEmpty else { throw RainError.invalid("课件 ID") }
-            let data = try await api.request("/api/v3/classroom-report/student/ppt", query: [
-                .init(name: "lesson_id", value: historical), .init(name: "presentationId", value: id)
-            ]).0.object("data")
-            if data["lessonId"] != nil && data.field("lessonId") != historical { throw RainError.invalid("课件课堂关联") }
-            if data["presentationId"] != nil && data.field("presentationId") != id { throw RainError.invalid("课件关联") }
-            let rows = try data.rows("slideList").filter {
-                ["1", "true"].contains($0.field("visible").lowercased())
-            }
+            let (data, rows) = try await api.historicalSlides(lessonID: historical, presentationID: id)
             let slides = Deck.slideImages(rows)
             guard !slides.isEmpty, slides.allSatisfy({ !$0.isEmpty }) else { throw RainError.invalid("暂无可查看的课件页面") }
             try Task.checkCancellation()

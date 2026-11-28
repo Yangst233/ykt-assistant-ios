@@ -286,6 +286,9 @@ struct Home: View {
                         .disabled(model.loadingFeed)
                 }
                 if let error = model.feedError { Text(error).foregroundStyle(.secondary) }
+                if let updated = model.feedUpdated {
+                    Text("本地动态更新于 \(updated.formatted())").font(.footnote).foregroundStyle(.secondary)
+                }
                 if model.loadingFeed && model.feed.isEmpty { ProgressView("正在刷新动态") }
                 ForEach(model.feed.indices, id: \.self) { index in
                     let item = model.feed[index]
@@ -386,6 +389,16 @@ struct Home: View {
                 }
                 .glassNavigationInteraction()
             }
+            AppSection("资料库") {
+                NavigationLink { OfflineDeckLibrary(model: model) } label: {
+                    NavigationRowLabel { Label("离线课件库", systemImage: "arrow.down.circle") }
+                }
+                .glassNavigationInteraction()
+                NavigationLink { AIAnswerLibrary(account: model.selected) } label: {
+                    NavigationRowLabel { Label("AI 答案库", systemImage: "tray.full") }
+                }
+                .glassNavigationInteraction()
+            }
             AppSection("应用信息") {
                 NavigationLink { AppInformationView(licenses: true) } label: {
                     NavigationRowLabel { Label("开放源代码许可", systemImage: "doc.text") }
@@ -416,7 +429,7 @@ struct Home: View {
 
 }
 
-private extension String {
+extension String {
     var nonempty: String? { isEmpty ? nil : self }
 }
 

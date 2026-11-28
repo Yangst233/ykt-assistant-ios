@@ -34,11 +34,11 @@ enum DeckExport {
         do {
             let archive = try Archive(url: output, accessMode: .create)
             var ratio = 1.0
-            for (offset, url) in deck.slides.enumerated() {
+            for offset in deck.slides.indices {
                 try Task.checkCancellation()
                 let page = offset + 1
                 await progress(page)
-                let input = try await api.slideImage(url)
+                let input = try await deck.pageData(offset, api: api)
                 guard let image = UIImage(data: input), let data = image.jpegData(compressionQuality: 0.94),
                       image.size.height > 0 else { throw RainError.invalid("课件图片") }
                 if offset == 0 { ratio = Double(image.size.width / image.size.height) }
@@ -47,6 +47,42 @@ enum DeckExport {
             await progress(nil)
             if pptx { try writeParts(archive, count: deck.slides.count, title: name, ratio: ratio) }
             try Task.checkCancellation()
+            return output
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    static func pdf(_ deck: Deck, api: RainAPI, progress: @escaping @MainActor (Int?) -> Void) async throws -> URL {
+        guard !deck.slides.isEmpty else { throw RainError.invalid("课件没有页面") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let output = directory.appendingPathComponent(fileStem(deck.title, fallback: "Slides")).appendingPathExtension("pdf")
+        do {
+            for index in deck.slides.indices {
+                try Task.checkCancellation()
+                await progress(index + 1)
+                let bytes = try await deck.pageData(index, api: api)
+                try bytes.write(to: directory.appendingPathComponent("\(index).image"))
+            }
+            await progress(nil)
+            try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 1, height: 1)).writePDF(to: output) { context in
+                for index in deck.slides.indices where !Task.isCancelled {
+                    autoreleasepool {
+                        let page = directory.appendingPathComponent("\(index).image")
+                        guard let image = UIImage(contentsOfFile: page.path) else { return }
+                        let bounds = CGRect(origin: .zero, size: image.size)
+                        context.beginPage(withBounds: bounds, pageInfo: [:])
+                        image.draw(in: bounds)
+                        try? FileManager.default.removeItem(at: page)
+                    }
+                }
+            }
+            try Task.checkCancellation()
+            guard (try FileManager.default.contentsOfDirectory(atPath: directory.path)).count == 1 else {
+                throw RainError.invalid("PDF 中有无法读取的课件图片")
+            }
             return output
         } catch {
             try? FileManager.default.removeItem(at: directory)

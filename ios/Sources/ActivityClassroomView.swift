@@ -28,12 +28,27 @@ struct ActivityClassroomView: View {
             ClassroomPPTList(report: report) { id, title in
                 model.openClassroomPPT(id: id, title: title, lessonID: route.id)
             }
+            if let api = model.api, let account = model.selected, let report {
+                let presentations = report["presentation"] as? [JSON] ?? []
+                if !presentations.isEmpty {
+                    AppSection("习题") {
+                        NavigationLink {
+                            HistoricalQuestionsView(api: api, account: account, lessonID: route.id, presentations: presentations)
+                        } label: { NavigationRowLabel { Label("历史习题", systemImage: "questionmark.bubble") } }
+                        .glassNavigationInteraction()
+                    }
+                }
+            }
         }
         .wallpaperSurface()
         .appNavigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: retry) {
-            guard let api = model.api else { return }
+        .task(id: "\(model.selected ?? ""):\(retry)") {
+            guard let api = model.api, let account = model.selected else { info = nil; report = nil; return }
+            let name = "classroom-" + OfflineStorage.key(route.id) + ".json"
+            let cached = OfflineStorage.read(name, account: account)
+            info = cached?["info"] as? JSON
+            report = cached?["report"] as? JSON
             infoError = nil
             reportError = nil
             do {
@@ -49,7 +64,14 @@ struct ActivityClassroomView: View {
                 try Task.checkCancellation()
                 report = value
             } catch {
-                if !Task.isCancelled { reportError = error.localizedDescription }
+                guard !Task.isCancelled else { return }
+                reportError = error.localizedDescription
+            }
+            if model.selected == account {
+                var snapshot: JSON = [:]
+                if let info { snapshot["info"] = info }
+                if let report { snapshot["report"] = report }
+                if !snapshot.isEmpty { try? OfflineStorage.write(snapshot, name: name, account: account) }
             }
         }
     }

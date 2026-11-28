@@ -6,24 +6,32 @@ final class CoursewareExport: ObservableObject {
     @Published private(set) var page: Int? = 1
     @Published private(set) var total = 0
     @Published private(set) var pptx = false
+    @Published private(set) var pdf = false
     @Published private(set) var filename = ""
     @Published private(set) var file: URL?
     @Published private(set) var error: String?
     private var task: Task<Void, Never>?
 
-    func start(_ deck: Deck, api: RainAPI, pptx: Bool, name: String?) {
+    func start(_ deck: Deck, api: RainAPI, pptx: Bool, name: String?, pdf: Bool = false) {
         guard !running else { return }
         clear()
         page = 1
         total = deck.slides.count
         self.pptx = pptx
-        let stem = DeckExport.exportStem(title: deck.title, pptx: pptx, filename: name)
-        filename = stem + (pptx ? ".pptx" : ".zip")
+        self.pdf = pdf
+        let stem = pdf ? DeckExport.fileStem(deck.title, fallback: "Slides") :
+            DeckExport.exportStem(title: deck.title, pptx: pptx, filename: name)
+        filename = stem + (pdf ? ".pdf" : pptx ? ".pptx" : ".zip")
         running = true
         task = Task {
             defer { running = false; task = nil }
             do {
-                let result = try await DeckExport.create(deck, api: api, pptx: pptx, filename: name) { self.page = $0 }
+                let report: @MainActor (Int?) -> Void = { self.page = $0 }
+                let result = if pdf {
+                    try await DeckExport.pdf(deck, api: api, progress: report)
+                } else {
+                    try await DeckExport.create(deck, api: api, pptx: pptx, filename: name, progress: report)
+                }
                 if Task.isCancelled { try? FileManager.default.removeItem(at: result.deletingLastPathComponent()) }
                 else { file = result }
             } catch {
@@ -53,7 +61,7 @@ struct ExportProgressView: View {
                     Text("第 \(page) 页，共 \(export.total) 页").font(.footnote).appTextStyle(.detail, fallback: .secondary)
                 }
             } else {
-                Text(export.pptx ? "正在生成 PPTX…" : "正在整理 ZIP…")
+                Text(export.pdf ? "正在生成 PDF…" : export.pptx ? "正在生成 PPTX…" : "正在整理 ZIP…")
             }
         }
         Button("取消导出") { export.cancel() }
