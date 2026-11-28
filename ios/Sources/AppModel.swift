@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
     @Published var busy = false
     @Published var canPage = true
     let quiz = QuizModel()
+    let danmu = ClassroomDanmu()
     private static let activeSelectionKey = "activeRainSelection"
     private static let activeServiceKey = "activeRainService"
     private static let activeAccountKey = "activeRainAccount"
@@ -112,6 +113,7 @@ final class AppModel: ObservableObject {
     }
 
     private func reset() {
+        danmu.reset()
         cancel()
         disconnect()
         quiz.bind()
@@ -320,6 +322,7 @@ final class AppModel: ObservableObject {
     }
 
     private func open(_ lesson: Lesson) {
+        danmu.reset()
         disconnect()
         self.lesson = lesson
         quiz.bind(api: api, lesson: lesson)
@@ -331,6 +334,7 @@ final class AppModel: ObservableObject {
     }
 
     func leave() {
+        danmu.reset()
         cancel()
         quiz.bind()
         guard let socket, let lesson else {
@@ -353,6 +357,7 @@ final class AppModel: ObservableObject {
             endLoginBackgroundTask()
             connect()
         } else {
+            danmu.stopSpeech()
             if qr != nil && loginBackgroundTask == .invalid {
                 loginBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Rain QR authorization") {
                     Task { @MainActor in self.cancel() }
@@ -424,6 +429,18 @@ final class AppModel: ObservableObject {
                     }
                     if !event.field("slideindex").isEmpty { livePage = event.field("slideindex") }
                     if let slide = event["slide"] as? JSON, !slide.field("si").isEmpty { livePage = slide.field("si") }
+                    if event.field("op") == "newdanmu", foreground {
+                        if let reply = danmu.ingest(event, ownID: api.userID) {
+                            Task {
+                                guard self.api === api, self.lesson?.token == lesson.token else { return }
+                                await sendClassroomDanmu(reply, automatic: true)
+                            }
+                        }
+                        let sender = event.field("userid")
+                        if sender != api.userID {
+                            Task { await loadDanmuSender(sender, api: api, lesson: lesson) }
+                        }
+                    }
                     quiz.ingest(event, presentation: presentation)
                     if quiz.finished {
                         isLessonFinished = true
@@ -444,7 +461,53 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func loadDanmuSender(_ sender: String, api: RainAPI, lesson: Lesson) async {
+        guard self.api === api, self.lesson?.token == lesson.token, foreground,
+              let row = live.first(where: { $0.field("lessonId") == lesson.id }) else { return }
+        let directClassroom = row.field("classroomId")
+        let classroom = directClassroom.isEmpty
+            ? courses.first(where: { $0.field("course_id") == row.field("courseId") })?.field("classroom_id") ?? ""
+            : directClassroom
+        guard !classroom.isEmpty, danmu.shouldLoadName(sender) else { return }
+        guard let data = try? await api.request("/v/course_meta/fetch_user_info_new", query: [
+            .init(name: "query_user_id", value: sender), .init(name: "classroom_id", value: classroom)
+        ], bearer: lesson.bearer).0.object("data"),
+              self.api === api, self.lesson?.token == lesson.token else { return }
+        danmu.saveName(data.field("name"), for: sender)
+    }
+
+    var canSendDanmu: Bool {
+        danmu.enabled && foreground && !isLessonFinished && lesson != nil && connection == "课堂已连接"
+    }
+
+    @discardableResult
+    func sendClassroomDanmu(_ input: String, automatic: Bool = false) async -> Bool {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, canSendDanmu, !danmu.sending, let api, let lesson,
+              !automatic || UserDefaults.standard.bool(forKey: "danmuAutoFollow") else { return false }
+        let token = lesson.token
+        danmu.sending = true
+        danmu.error = nil
+        defer { if self.api === api && self.lesson?.token == token { danmu.sending = false } }
+        do {
+            let response = try await api.request("/api/v3/lesson/danmu/send", body: [
+                "extra": "", "fromStart": "50", "lessonId": lesson.id, "message": text,
+                "requiredCensor": false, "showStatus": true, "target": "", "userName": "", "wordCloud": true
+            ], bearer: lesson.bearer).0
+            guard self.api === api && self.lesson?.token == token else { return false }
+            guard response.field("code") == "0" else { throw RainError.invalid("弹幕发送结果") }
+            danmu.announceSent()
+            return true
+        } catch {
+            if self.api === api && self.lesson?.token == token && !Task.isCancelled {
+                danmu.error = error.localizedDescription
+            }
+            return false
+        }
+    }
+
     private func invalidateCredentials(_ id: String) {
+        danmu.reset()
         disconnect()
         quiz.bind()
         lesson = nil

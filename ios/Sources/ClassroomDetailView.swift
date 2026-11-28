@@ -64,6 +64,10 @@ struct ClassroomDetailView: View {
                         NavigationRowLabel { Text("课堂题目") }
                     }
                     .glassNavigationInteraction()
+                    NavigationLink { ClassroomDanmuView(model: model, danmu: model.danmu) } label: {
+                        NavigationRowLabel { Text("课堂弹幕") }
+                    }
+                    .glassNavigationInteraction()
                     if model.connection != "课堂已连接" && !model.isLessonFinished {
                         Button("重新连接") { model.connect() }
                     }

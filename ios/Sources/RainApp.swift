@@ -367,6 +367,10 @@ struct Home: View {
                 if let status = model.loginStatus { Text(status).foregroundStyle(.secondary) }
             }
             AppSection("设置") {
+                NavigationLink { DanmuSettingsView() } label: {
+                    NavigationRowLabel { Label("弹幕设置", systemImage: "text.bubble") }
+                }
+                .glassNavigationInteraction()
                 NavigationLink {
                     MaterialForm { AppearanceSettings() }
                         .wallpaperSurface()
@@ -379,6 +383,16 @@ struct Home: View {
                     pptSettings
                 } label: {
                     NavigationRowLabel { Label("PPT", systemImage: "slides") }
+                }
+                .glassNavigationInteraction()
+            }
+            AppSection("应用信息") {
+                NavigationLink { AppInformationView(licenses: true) } label: {
+                    NavigationRowLabel { Label("开放源代码许可", systemImage: "doc.text") }
+                }
+                .glassNavigationInteraction()
+                NavigationLink { AppInformationView(licenses: false) } label: {
+                    NavigationRowLabel { Label("关于", systemImage: "info.circle") }
                 }
                 .glassNavigationInteraction()
             }

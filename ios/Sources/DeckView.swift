@@ -10,6 +10,8 @@ struct DeckView: View {
     var teacherPage: Int? = nil
     var followError: String? = nil
     var retryFollow: (() -> Void)? = nil
+    var classroomModel: AppModel? = nil
+    @State private var showsDanmu = false
     @Environment(\.dismiss) private var dismiss
     @ScaledMetric(relativeTo: .footnote) private var cornerControlClearance = 128.0
     @EnvironmentObject private var appearance: AppAppearance
@@ -61,6 +63,9 @@ struct DeckView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("操作", systemImage: "ellipsis.circle") {
+                        if classroomModel != nil {
+                            Button("课堂弹幕", systemImage: "text.bubble") { showsDanmu = true }
+                        }
                         Button("保存当前图片", systemImage: "photo") { save() }.disabled(image == nil || exports.running)
                         Button("导出 PPTX", systemImage: "document") { preparePPTX() }.disabled(exports.running)
                         Button("导出 ZIP", systemImage: "archivebox") { exports.start(deck, api: api, pptx: false, name: nil) }.disabled(exports.running)
@@ -137,6 +142,16 @@ struct DeckView: View {
                     }
                 }
                 .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showsDanmu) {
+                if let classroomModel {
+                    NavigationStack {
+                        ClassroomDanmuView(model: classroomModel, danmu: classroomModel.danmu)
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) { Button("关闭") { showsDanmu = false } }
+                            }
+                    }
+                }
             }
             .sheet(item: $automaticShare) { request in
                 ExportActivitySheet(file: request.file)
@@ -496,7 +511,7 @@ struct LiveDeckReader: View {
         let target = targetPresentation
         let page = target == deck.live?.presentationID ? Int(model.livePage) : nil
         DeckView(deck: deck, api: api, followTeacher: $followTeacher, teacherPage: page,
-                 followError: followTeacher ? error : nil, retryFollow: { retry += 1 })
+                 followError: followTeacher ? error : nil, retryFollow: { retry += 1 }, classroomModel: model)
             .task(id: FollowRequest(presentation: target, retry: retry)) {
                 error = nil
                 guard let target, target != deck.live?.presentationID, let lesson = model.lesson else { return }
